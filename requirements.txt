@@ -1,51 +1,34 @@
 altgraph==0.17.3
-autopep8==1.7.0
-beautifulsoup4==4.11.1
-brotlipy==0.7.0
-bs4==0.0.1
-certifi @ file:///C:/Windows/TEMP/abs_e9b7158a-aa56-4a5b-87b6-c00d295b01fanefpc8_o/croots/recipe/certifi_1655968940823/work/certifi
-cffi @ file:///C:/Windows/Temp/abs_6808y9x40v/croots/recipe/cffi_1659598653989/work
-charset-normalizer @ file:///tmp/build/80754af9/charset-normalizer_1630003229654/work
-colorama @ file:///C:/Windows/TEMP/abs_9439aeb1-0254-449a-96f7-33ab5eb17fc8apleb4yn/croots/recipe/colorama_1657009099097/work
-conda==4.14.0
-conda-package-handling @ file:///C:/ci/conda-package-handling_1649106011304/work
-contourpy==1.0.5
-cryptography @ file:///C:/ci/cryptography_1652083563162/work
-cycler==0.11.0
-cytoolz==0.11.0
-fonttools==4.37.4
-future==0.18.2
-idna @ file:///tmp/build/80754af9/idna_1637925883363/work
-iso8601==1.1.0
-kiwisolver==1.4.4
-lxml==4.9.1
-matplotlib==3.6.1
-menuinst @ file:///C:/ci/menuinst_1631733438520/work
-nhentai==0.4.17
-numpy==1.23.4
-opencv-python==4.6.0.66
-packaging==21.3
+beautifulsoup4==4.10.0
+bottle==0.12.23
+bottle-websocket==0.2.9
+cffi==1.15.1
+charset-normalizer==3.0.1
+click==7.1.2
+Eel==0.14.0
+future==0.18.3
+gevent==22.10.2
+gevent-websocket==0.10.1
+greenlet==2.0.2
+idna==3.4
 pefile==2023.2.7
-Pillow==9.2.0
-pycodestyle==2.9.1
-pycosat==0.6.3
-pycparser @ file:///tmp/build/80754af9/pycparser_1636541352034/work
+pycparser==2.21
 pyinstaller==5.8.0
 pyinstaller-hooks-contrib==2023.0
-pyOpenSSL @ file:///opt/conda/conda-bld/pyopenssl_1643788558760/work
 pyparsing==3.0.9
-PySocks @ file:///C:/ci/pysocks_1605307512533/work
-python-dateutil==2.8.2
-pywin32==302
+PyQt5==5.15.4
+pyqt5-plugins==5.15.4.2.2
+PyQt5-Qt5==5.15.2
+PyQt5-sip==12.11.1
+pyqt5-tools==5.15.4.3.2
+python-dotenv==0.21.1
+pyuic5-tool==0.0.1
 pywin32-ctypes==0.2.0
-requests @ file:///C:/ci/requests_1657735342357/work
-ruamel-yaml-conda @ file:///C:/ci/ruamel_yaml_1616016898638/work
-six==1.16.0
-soupsieve==2.3.2.post1
-tabulate==0.9.0
-toml==0.10.2
-toolz @ file:///tmp/build/80754af9/toolz_1636545406491/work
-tqdm @ file:///C:/ci/tqdm_1650636210717/work
-urllib3 @ file:///C:/Windows/TEMP/abs_65ynz4fdmi/croots/recipe/urllib3_1659110473919/work
-win-inet-pton @ file:///C:/ci/win_inet_pton_1605306162074/work
+qt5-applications==5.15.2.2.2
+qt5-tools==5.15.2.1.2
+requests==2.28.2
+urllib3==1.26.14
+whichcraft==0.6.1
 wincertstore==0.2
+zope.event==4.6
+zope.interface==5.5.2
