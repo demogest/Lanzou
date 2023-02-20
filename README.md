@@ -34,7 +34,7 @@ have a look at *requirements.txt*
 
 6. click start button and wait until complete
 
-Or you can just download binary file which packed by pyinstaller from release page.
+Or you can just download binary file which packed by pyinstaller from [release page](https://github.com/demogest/Lanzou/releases).
 
 # Notice
 
