@@ -1,15 +1,16 @@
 import json
+import multiprocessing
 import sys
+from datetime import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QThreadPool
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtCore import Qt, QThreadPool, QUrl
+from PyQt5.QtGui import QDesktopServices, QFont, QIcon
 from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
     QFrame,
-    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -17,6 +18,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -28,6 +30,7 @@ from mainWindow import Ui_MainWindow
 
 
 SETTINGS_PATH = Path(__file__).with_name("lanzou_settings.json")
+HISTORY_PATH = Path(__file__).with_name("lanzou_history.json")
 
 
 class DownloadProgressDialog(QDialog):
@@ -141,6 +144,71 @@ class DownloadProgressDialog(QDialog):
         self.setWindowTitle("下载完成")
 
 
+class SettingsDialog(QDialog):
+    def __init__(self, default_dir, process_count, on_choose_directory, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("下载设置")
+        self.resize(620, 240)
+        self.setMinimumSize(560, 220)
+        self._on_choose_directory = on_choose_directory
+        self._max_processes = max(1, multiprocessing.cpu_count())
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(10)
+
+        title = QLabel("设置", self)
+        title.setObjectName("SectionLabel")
+        hint = QLabel("可设置默认目录与下载进程（1 ~ CPU最大进程）。", self)
+        hint.setObjectName("HintLabel")
+        layout.addWidget(title)
+        layout.addWidget(hint)
+
+        self.defaultDirText = QLineEdit(self)
+        self.defaultDirText.setText(default_dir)
+        self.defaultDirBtn = QPushButton("选择目录", self)
+        self.processCountSpin = QSpinBox(self)
+        self.processCountSpin.setMinimum(1)
+        self.processCountSpin.setMaximum(self._max_processes)
+        self.processCountSpin.setValue(max(1, min(process_count, self._max_processes)))
+
+        self.defaultDirBtn.clicked.connect(self.choose_default_directory)
+
+        def row(label_text, field, extra=None):
+            row_widget = QWidget(self)
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(10)
+            label = QLabel(label_text, row_widget)
+            label.setFixedWidth(92)
+            row_layout.addWidget(label)
+            row_layout.addWidget(field, 1)
+            if extra is not None:
+                row_layout.addWidget(extra)
+            return row_widget
+
+        layout.addWidget(row("默认目录", self.defaultDirText, self.defaultDirBtn))
+        layout.addWidget(row("下载进程", self.processCountSpin))
+
+        action = QWidget(self)
+        action_layout = QHBoxLayout(action)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.addStretch(1)
+        self.saveBtn = QPushButton("保存并关闭", self)
+        self.saveBtn.clicked.connect(self.accept)
+        action_layout.addWidget(self.saveBtn)
+        layout.addWidget(action)
+
+    def choose_default_directory(self):
+        selected = self._on_choose_directory(self.defaultDirText.text().strip())
+        if selected:
+            self.defaultDirText.setText(selected)
+
+    def values(self):
+        default_dir = self.defaultDirText.text().strip()
+        return default_dir, self.processCountSpin.value()
+
+
 class LanzouWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -149,15 +217,14 @@ class LanzouWindow(QMainWindow):
         self.threadpool = QThreadPool.globalInstance()
         self.active_worker = None
         self.download_dialog = None
-        self.default_download_dir = self._load_default_download_dir()
+        self.default_download_dir, self.process_count = self._load_settings()
+        self.last_task = None
 
         self._modernize_ui()
         self.ui.DirText.setText(self.default_download_dir)
-        self.defaultDirText.setText(self.default_download_dir)
         self.ui.DirBtn.clicked.connect(self.choose_directory)
-        self.defaultDirBtn.clicked.connect(self.choose_default_directory)
-        self.saveSettingsBtn.clicked.connect(self.save_settings)
-        self.defaultDirText.textChanged.connect(self.mark_settings_dirty)
+        self.settingsBtn.clicked.connect(self.open_settings_dialog)
+        self.historyBtn.clicked.connect(self.open_history_dialog)
         self.ui.StartBtn.clicked.connect(self.start_download)
 
     def _modernize_ui(self):
@@ -271,56 +338,20 @@ class LanzouWindow(QMainWindow):
         form_layout.addWidget(action_widget)
         shell.addWidget(form_card)
         shell.addSpacing(16)
-
-        settings_card = QFrame(surface)
-        settings_card.setObjectName("SettingsCard")
-        settings_layout = QVBoxLayout(settings_card)
-        settings_layout.setContentsMargins(24, 20, 24, 20)
-        settings_layout.setSpacing(12)
-
-        settings_title = QLabel("设置", settings_card)
-        settings_title.setObjectName("SectionLabel")
-        settings_hint = QLabel("默认下载目录会用于新任务；多线程选项暂时预留。", settings_card)
-        settings_hint.setObjectName("HintLabel")
-
-        self.defaultDirText = QLineEdit(settings_card)
-        self.defaultDirText.setPlaceholderText("默认下载目录")
-        self.defaultDirBtn = QPushButton("选择目录", settings_card)
-        self.defaultDirBtn.setIcon(QIcon())
-        self.defaultDirBtn.setMinimumHeight(42)
-        self.defaultDirBtn.setMinimumWidth(118)
-
-        default_dir_field = QWidget(settings_card)
-        default_dir_layout = QHBoxLayout(default_dir_field)
-        default_dir_layout.setContentsMargins(0, 0, 0, 0)
-        default_dir_layout.setSpacing(12)
-        default_dir_layout.addWidget(self.defaultDirText, 1)
-        default_dir_layout.addWidget(self.defaultDirBtn)
-
-        default_dir_label = QLabel("默认目录", settings_card)
-        default_dir_row = create_form_row(default_dir_label, default_dir_field, settings_card)
-
-        self.multiThreadCheck = QCheckBox("多线程下载（预留）", settings_card)
-        self.multiThreadCheck.setEnabled(False)
-        self.multiThreadCheck.setToolTip("预留给未来的多线程下载功能")
-
-        self.saveSettingsBtn = QPushButton("保存设置", settings_card)
-        self.saveSettingsBtn.setObjectName("SaveSettingsBtn")
-        self.saveSettingsBtn.setMinimumHeight(42)
-        self.saveSettingsBtn.setMinimumWidth(128)
-
-        settings_action = QWidget(settings_card)
-        settings_action_layout = QHBoxLayout(settings_action)
-        settings_action_layout.setContentsMargins(0, 0, 0, 0)
-        settings_action_layout.addWidget(self.multiThreadCheck)
-        settings_action_layout.addStretch(1)
-        settings_action_layout.addWidget(self.saveSettingsBtn)
-
-        settings_layout.addWidget(settings_title)
-        settings_layout.addWidget(settings_hint)
-        settings_layout.addWidget(default_dir_row)
-        settings_layout.addWidget(settings_action)
-        shell.addWidget(settings_card)
+        bottom_action = QWidget(surface)
+        bottom_layout = QHBoxLayout(bottom_action)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.addStretch(1)
+        self.settingsBtn = QPushButton("下载设置", bottom_action)
+        self.settingsBtn.setObjectName("SettingsBtn")
+        self.settingsBtn.setMinimumHeight(42)
+        self.settingsBtn.setMinimumWidth(128)
+        bottom_layout.addWidget(self.settingsBtn)
+        self.historyBtn = QPushButton("下载历史", bottom_action)
+        self.historyBtn.setMinimumHeight(42)
+        self.historyBtn.setMinimumWidth(128)
+        bottom_layout.addWidget(self.historyBtn)
+        shell.addWidget(bottom_action)
         shell.addStretch(1)
 
         self.ui.LinkText.setMinimumHeight(46)
@@ -330,7 +361,6 @@ class LanzouWindow(QMainWindow):
         self.ui.DirBtn.setMinimumWidth(128)
         self.ui.StartBtn.setMinimumHeight(46)
         self.ui.StartBtn.setMinimumWidth(156)
-        self.defaultDirText.setMinimumHeight(42)
 
         self.setStyleSheet(
             """
@@ -359,7 +389,7 @@ class LanzouWindow(QMainWindow):
                 font-size: 13px;
                 font-weight: 500;
             }
-            QFrame#FormCard, QFrame#SettingsCard {
+            QFrame#FormCard {
                 background: #ffffff;
                 border: 1px solid #e1e7f0;
                 border-radius: 8px;
@@ -419,15 +449,10 @@ class LanzouWindow(QMainWindow):
                 border-color: #93b4f5;
                 color: #f8fbff;
             }
-            QPushButton#SaveSettingsBtn {
+            QPushButton#SettingsBtn {
                 background: #eff6ff;
                 border: 1px solid #bfdbfe;
                 color: #1d4ed8;
-            }
-            QCheckBox {
-                color: #94a3b8;
-                font-size: 14px;
-                font-weight: 600;
             }
             """
         )
@@ -441,30 +466,39 @@ class LanzouWindow(QMainWindow):
         if directory:
             self.ui.DirText.setText(directory)
 
-    def choose_default_directory(self):
-        directory = QFileDialog.getExistingDirectory(
+    def choose_directory_dialog(self, current_dir):
+        return QFileDialog.getExistingDirectory(
             self,
-            "选择默认下载目录",
-            self.defaultDirText.text().strip() or self.default_download_dir,
+            "选择目录",
+            current_dir.strip() or self.default_download_dir,
         )
-        if directory:
-            self.defaultDirText.setText(directory)
 
-    def save_settings(self):
+    def open_settings_dialog(self):
+        dialog = SettingsDialog(
+            self.default_download_dir,
+            self.process_count,
+            self.choose_directory_dialog,
+            self,
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            return
         previous_default_dir = self.default_download_dir
-        default_dir = self.defaultDirText.text().strip()
+        default_dir, process_count = dialog.values()
         if not default_dir:
             default_dir = self._fallback_download_dir()
-            self.defaultDirText.setText(default_dir)
 
         self.default_download_dir = default_dir
+        self.process_count = process_count
         current_task_dir = self.ui.DirText.text().strip()
         if not current_task_dir or current_task_dir == previous_default_dir:
             self.ui.DirText.setText(default_dir)
         try:
             SETTINGS_PATH.write_text(
                 json.dumps(
-                    {"default_download_dir": default_dir},
+                    {
+                        "default_download_dir": default_dir,
+                        "process_count": process_count,
+                    },
                     ensure_ascii=False,
                     indent=2,
                 ),
@@ -474,17 +508,14 @@ class LanzouWindow(QMainWindow):
             QMessageBox.warning(self, "设置保存失败", "无法保存设置：%s" % exc)
             return
 
-        self.saveSettingsBtn.setText("已保存")
-
-    def mark_settings_dirty(self):
-        if hasattr(self, "saveSettingsBtn"):
-            self.saveSettingsBtn.setText("保存设置")
+        QMessageBox.information(self, "设置已保存", "默认目录和下载进程已更新。")
 
     def start_download(self):
         task = self._build_task()
         if task is None:
             return
 
+        self.last_task = task
         self._prepare_download_ui()
         worker = DownloadWorker(task)
         worker.signals.message.connect(self.append_message)
@@ -510,6 +541,7 @@ class LanzouWindow(QMainWindow):
             share_url=share_url,
             password=self.ui.PwdText.text(),
             target_dir=Path(target_dir),
+            process_count=self.process_count,
         )
 
     def _prepare_download_ui(self):
@@ -529,22 +561,77 @@ class LanzouWindow(QMainWindow):
     def show_error(self, message):
         self.append_message("Error: %s" % message)
 
-    def download_finished(self):
+    def download_finished(self, downloaded_paths):
         self.ui.StartBtn.setEnabled(True)
         self.ui.StartBtn.setText("开始下载")
         self.ui.DirBtn.setEnabled(True)
         if self.download_dialog is not None:
             self.download_dialog.mark_finished()
+        self._append_history(downloaded_paths)
+        self._prompt_open_folder(downloaded_paths)
         self.active_worker = None
 
-    def _load_default_download_dir(self):
+    def _prompt_open_folder(self, downloaded_paths):
+        folder = self.ui.DirText.text().strip() or self.default_download_dir
+        message = QMessageBox(self)
+        message.setWindowTitle("下载完成")
+        message.setText("任务已完成，是否打开下载目录？")
+        open_btn = message.addButton("打开文件夹", QMessageBox.AcceptRole)
+        message.addButton("关闭", QMessageBox.RejectRole)
+        message.exec_()
+        if message.clickedButton() == open_btn:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def _append_history(self, downloaded_paths):
+        if self.last_task is None:
+            return
+        record = {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "share_url": self.last_task.share_url,
+            "target_dir": str(self.last_task.target_dir),
+            "process_count": self.last_task.process_count,
+            "downloaded_count": len(downloaded_paths or []),
+            "files": [str(path) for path in (downloaded_paths or [])],
+        }
+        history = self._load_history()
+        history.insert(0, record)
+        HISTORY_PATH.write_text(json.dumps(history[:200], ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _load_history(self):
+        try:
+            return json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    def open_history_dialog(self):
+        history = self._load_history()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("下载历史")
+        dialog.resize(760, 480)
+        layout = QVBoxLayout(dialog)
+        browser = QTextBrowser(dialog)
+        if not history:
+            browser.setText("暂无下载历史。")
+        else:
+            blocks = []
+            for item in history:
+                blocks.append(
+                    "时间: {time}\n链接: {share_url}\n目录: {target_dir}\n进程: {process_count}\n下载文件数: {downloaded_count}\n".format(**item)
+                )
+            browser.setText("\n" + ("\n" + ("-" * 52) + "\n").join(blocks))
+        layout.addWidget(browser)
+        dialog.exec_()
+
+    def _load_settings(self):
         try:
             settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return self._fallback_download_dir()
+            return self._fallback_download_dir(), 1
 
         default_dir = str(settings.get("default_download_dir", "")).strip()
-        return default_dir or self._fallback_download_dir()
+        process_count = int(settings.get("process_count", 1))
+        process_count = max(1, min(process_count, max(1, multiprocessing.cpu_count())))
+        return (default_dir or self._fallback_download_dir()), process_count
 
     def _fallback_download_dir(self):
         return str(Path(__file__).resolve().parent / "Download")
