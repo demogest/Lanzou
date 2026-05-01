@@ -174,7 +174,7 @@ class LanzouClient:
                 "websignkey": ajaxdata,
                 "signs": ajaxdata,
                 "sign": wp_sign.group(1),
-                "websign": "2",
+                "websign": "",
                 "kd": 1,
                 "ves": 1,
             }
@@ -189,6 +189,10 @@ class LanzouClient:
         }
 
     def _ajax_endpoint(self, iframe_html, iframe_url):
+        ajax_paths = re.findall(r"url\s*:\s*['\"](/?ajaxm\.php\?file=\d+)", iframe_html)
+        if ajax_paths:
+            return urljoin(self._origin(iframe_url) + "/", ajax_paths[-1].lstrip("/"))
+
         ajax_path = re.search(r"(/?ajaxm\.php\?file=\d+)", iframe_html)
         if ajax_path:
             return urljoin(self._origin(iframe_url) + "/", ajax_path.group(1).lstrip("/"))
