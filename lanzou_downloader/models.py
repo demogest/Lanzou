@@ -7,6 +7,7 @@ class DownloadTask:
     share_url: str
     password: str
     target_dir: Path
+    process_count: int = 1
 
     def normalized(self):
         return replace(
@@ -14,6 +15,7 @@ class DownloadTask:
             share_url=self.share_url.strip(),
             password=self.password.strip(),
             target_dir=Path(self.target_dir),
+            process_count=max(1, int(self.process_count)),
         )
 
 
