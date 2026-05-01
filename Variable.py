@@ -2,15 +2,13 @@ from Constant import Constants
 
 
 class Variable:
-    # Headers
-    __headers = Constants.HEADERS
-
     # Init
     def __init__(self, url, password, dir, updater):
         self.__url = url
         self.__password = password
         self.__dir = dir
         self.__file_url_with_name = []
+        self.__headers = Constants.HEADERS.copy()
         self.__headers['Referer'] = self.__url
         self.__updater = updater
 
@@ -75,11 +73,11 @@ class Variable:
         self.__file_url_with_name = []
 
     def clear_headers(self):
-        self.__headers = Constants.HEADERS
+        self.__headers = Constants.HEADERS.copy()
 
     def clear(self):
         self.__file_url_with_name = []
-        self.__headers = Constants.HEADERS
+        self.__headers = Constants.HEADERS.copy()
         self.__password = ''
         self.__url = ''
         self.__dir = ''

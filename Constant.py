@@ -1,3 +1,6 @@
+from lanzou_downloader.config import DEFAULT_HEADERS, LanzouConfig
+
+
 class _Constant:
     class ConstError(TypeError):
         pass
@@ -14,19 +17,13 @@ class _Constant:
 
 
 Constants = _Constant()
-Constants.HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
-                  'Chrome/80.0.3987.132 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,'
-              'application/signed-exchange;v=b3;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Accept-Language': 'zh-CN,zh;q=0.9',
-}
+_config = LanzouConfig()
+Constants.HEADERS = DEFAULT_HEADERS.copy()
 Constants.NEED_PWD = 1
 Constants.NO_NEED_PWD = 0
 Constants.PWD_ERROR = -1
 Constants.SINGLE_FILE = 2
 Constants.MULTI_FILE = 3
-Constants.PREFIX = 'https://www.lanzoux.com/'
-Constants.AJAX_URL = 'https://www.lanzoux.com/ajaxm.php'
-Constants.FILE_MORE_AJAX_URL = 'https://www.lanzoux.com/filemoreajax.php'
+Constants.PREFIX = _config.prefix
+Constants.AJAX_URL = _config.ajax_url
+Constants.FILE_MORE_AJAX_URL = _config.file_more_ajax_url

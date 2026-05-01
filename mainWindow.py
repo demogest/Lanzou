@@ -112,7 +112,7 @@ class Ui_MainWindow(object):
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
         MainWindow.setWindowTitle(_translate("MainWindow", "Lanzou Downloader"))
-        self.DirLab.setText(_translate("MainWindow", "Diretory"))
+        self.DirLab.setText(_translate("MainWindow", "Directory"))
         self.LinkLab.setText(_translate("MainWindow", "Link"))
         self.StartBtn.setText(_translate("MainWindow", "Start"))
         self.label.setText(_translate("MainWindow", ":"))

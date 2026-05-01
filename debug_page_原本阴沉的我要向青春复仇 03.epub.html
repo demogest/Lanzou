@@ -1,0 +1,54 @@
+<!-- file pages1 -->
+<!DOCTYPE HTML>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<script type="text/javascript" src="https://assets.woozooo.com/assets/includes/js/jquery.js"></script>
+<link href="https://assets.woozooo.com/assets/img/tf.css" rel="stylesheet" type="text/css">
+</head>
+<body>
+<div id="outime">å°åè¶æ¶ï¼è¯·å·æ°</div>
+
+<div class="load" id="tourl">
+æä»¶å è½½ä¸­...
+</div>
+
+<script type="text/javascript">
+		var lanosso = '';
+
+		var wsk_sign = 'c20230908';
+		var aihidcms = '';
+		var ciucjdsdc = '';
+		var wp_sign = 'AWcFOwAxBTQFDAc4BDQFOVE5BjFTO1ZmBDtaZV00ADUANgd2DyYHbghvA2IHZwE0WjVTZQdrBjBVa1Zp';
+		var v3v3 = '';
+		var ajaxdata = 'otd1';
+		var kdns =1;
+		if (typeof(killdns)=='undefined'){
+					//var kdns = 0;
+		}
+		$.ajax({
+			type : 'post',//url : '/ajaxm.php?file=1',//
+			url : '/ajaxm.php?file=227289546',//data///////
+		data : { 'action':'downprocess','websignkey':ajaxdata,'signs':ajaxdata,'sign':wp_sign,'websign':'2','kd':kdns,'ves':1 },//},//'ves':1 },/////
+		//dataType : 'json',
+		//type : 'post',
+			dataType : 'json',
+			success:function(msg){
+				var date = msg;
+				var dom_down = date.dom;
+				if(date.zt == '1'){
+										$("#tourl").html("<a href="+dom_down+"/file/"+ date.url + lanosso +" target=_blank rel=noreferrer><span class=txt>çµä¿¡ä¸è½½</span><span class='txt txtc'>èéä¸è½½</span><span class=txt>æ®éä¸è½½</span></a>");
+					setTimeout('$("#outime").css("display","block");',1800000);
+									}else{
+					$("#tourl").html("ç½é¡µè¶æ¶ï¼è¯·å·æ°");
+				};
+				
+			},
+			error:function(){
+				$("#tourl").html("è·åå¤±è´¥ï¼è¯·å·æ°");
+			}
+	
+		});
+</script>
+</body>
+</html>
