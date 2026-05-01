@@ -6,6 +6,7 @@ from .service import DownloadCallbacks, LanzouDownloadService
 class DownloadSignals(QObject):
     message = pyqtSignal(str)
     progress = pyqtSignal(int)
+    file_progress = pyqtSignal(int)
     error = pyqtSignal(str)
     finished = pyqtSignal()
 
@@ -22,6 +23,7 @@ class DownloadWorker(QRunnable):
         callbacks = DownloadCallbacks(
             on_message=self.signals.message.emit,
             on_progress=self.signals.progress.emit,
+            on_file_progress=self.signals.file_progress.emit,
         )
         try:
             self.service.download(self.task, callbacks)

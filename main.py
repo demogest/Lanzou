@@ -1,4 +1,4 @@
-import os
+import json
 import sys
 from pathlib import Path
 
@@ -6,12 +6,18 @@ from PyQt5.QtCore import Qt, QThreadPool
 from PyQt5.QtGui import QFont, QIcon
 from PyQt5.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QFrame,
+    QCheckBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
-    QSizePolicy,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -21,6 +27,120 @@ from lanzou_downloader.qt_worker import DownloadWorker
 from mainWindow import Ui_MainWindow
 
 
+SETTINGS_PATH = Path(__file__).with_name("lanzou_settings.json")
+
+
+class DownloadProgressDialog(QDialog):
+    def __init__(self, parent=None, app_font=None):
+        super().__init__(parent)
+        self.setObjectName("DownloadDialog")
+        self.setWindowTitle("下载进度")
+        self.resize(760, 500)
+        self.setMinimumSize(660, 420)
+        if app_font is not None:
+            self.setFont(app_font)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(12)
+
+        title = QLabel("下载进度", self)
+        title.setObjectName("DialogTitle")
+        log_label = QLabel("运行日志", self)
+        log_label.setObjectName("DialogSectionLabel")
+        self.logBrowser = QTextBrowser(self)
+        self.logBrowser.setPlaceholderText("等待任务开始...")
+
+        self.currentProgressLabel = QLabel("当前文件", self)
+        self.currentProgressLabel.setObjectName("DialogProgressLabel")
+        self.currentProgressBar = QProgressBar(self)
+        self.currentProgressBar.setObjectName("CurrentProgressBar")
+
+        self.totalProgressLabel = QLabel("总进度", self)
+        self.totalProgressLabel.setObjectName("DialogProgressLabel")
+        self.totalProgressBar = QProgressBar(self)
+        self.totalProgressBar.setObjectName("TotalProgressBar")
+
+        for progress_bar in (self.currentProgressBar, self.totalProgressBar):
+            progress_bar.setMinimum(0)
+            progress_bar.setMaximum(100)
+            progress_bar.setValue(0)
+            progress_bar.setTextVisible(True)
+            progress_bar.setFixedHeight(24)
+            if app_font is not None:
+                progress_bar.setFont(app_font)
+
+        layout.addWidget(title)
+        layout.addWidget(log_label)
+        layout.addWidget(self.logBrowser, 1)
+        layout.addWidget(self.currentProgressLabel)
+        layout.addWidget(self.currentProgressBar)
+        layout.addWidget(self.totalProgressLabel)
+        layout.addWidget(self.totalProgressBar)
+
+        self.setStyleSheet(
+            """
+            QDialog#DownloadDialog {
+                background: #f6f8fb;
+                color: #182230;
+                font-family: "Microsoft YaHei UI", "Segoe UI";
+            }
+            QLabel#DialogTitle {
+                color: #0b1220;
+                font-size: 22px;
+                font-weight: 700;
+            }
+            QLabel#DialogSectionLabel {
+                color: #1f2a44;
+                font-size: 15px;
+                font-weight: 700;
+            }
+            QLabel#DialogProgressLabel {
+                color: #64748b;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QTextBrowser {
+                background: #ffffff;
+                border: 1px solid #d7e0ec;
+                border-radius: 8px;
+                color: #344256;
+                padding: 13px;
+                font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei UI";
+                font-size: 14px;
+            }
+            QProgressBar {
+                background: #e8edf5;
+                border: none;
+                border-radius: 8px;
+                color: #344054;
+                font-size: 13px;
+                font-weight: 700;
+                height: 24px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background: #14b8a6;
+                border-radius: 8px;
+            }
+            QProgressBar#TotalProgressBar::chunk {
+                background: #2563eb;
+            }
+            """
+        )
+
+    def reset(self):
+        self.logBrowser.clear()
+        self.currentProgressBar.setValue(0)
+        self.totalProgressBar.setValue(0)
+
+    def append_message(self, message):
+        self.logBrowser.append(message)
+
+    def mark_finished(self):
+        self.setWindowTitle("下载完成")
+
+
 class LanzouWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -28,17 +148,22 @@ class LanzouWindow(QMainWindow):
         self.ui.setupUi(self)
         self.threadpool = QThreadPool.globalInstance()
         self.active_worker = None
+        self.download_dialog = None
+        self.default_download_dir = self._load_default_download_dir()
 
         self._modernize_ui()
-        self.ui.DirText.setText(str(Path(os.getcwd()) / "Download"))
-        self.ui.progressBar.setVisible(False)
+        self.ui.DirText.setText(self.default_download_dir)
+        self.defaultDirText.setText(self.default_download_dir)
         self.ui.DirBtn.clicked.connect(self.choose_directory)
+        self.defaultDirBtn.clicked.connect(self.choose_default_directory)
+        self.saveSettingsBtn.clicked.connect(self.save_settings)
+        self.defaultDirText.textChanged.connect(self.mark_settings_dirty)
         self.ui.StartBtn.clicked.connect(self.start_download)
 
     def _modernize_ui(self):
         self.setWindowTitle("Lanzou Downloader")
-        self.resize(860, 660)
-        self.setMinimumSize(780, 600)
+        self.resize(820, 610)
+        self.setMinimumSize(720, 560)
 
         app_font = QFont("Microsoft YaHei UI", 11)
         if not app_font.exactMatch():
@@ -54,8 +179,6 @@ class LanzouWindow(QMainWindow):
             self.ui.DirText,
             self.ui.DirBtn,
             self.ui.StartBtn,
-            self.ui.textBrowser,
-            self.ui.progressBar,
         ):
             widget.setFont(app_font)
 
@@ -91,8 +214,6 @@ class LanzouWindow(QMainWindow):
             self.ui.DirText,
             self.ui.DirBtn,
             self.ui.StartBtn,
-            self.ui.textBrowser,
-            self.ui.progressBar,
         ):
             widget.setParent(surface)
         self.setCentralWidget(surface)
@@ -118,8 +239,8 @@ class LanzouWindow(QMainWindow):
         form_layout.setContentsMargins(24, 22, 24, 22)
         form_layout.setSpacing(12)
 
-        def create_form_row(label, field):
-            row = QWidget(form_card)
+        def create_form_row(label, field, parent):
+            row = QWidget(parent)
             row.setMinimumHeight(48)
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
@@ -137,9 +258,9 @@ class LanzouWindow(QMainWindow):
         directory_layout.addWidget(self.ui.DirText, 1)
         directory_layout.addWidget(self.ui.DirBtn)
 
-        form_layout.addWidget(create_form_row(self.ui.LinkLab, self.ui.LinkText))
-        form_layout.addWidget(create_form_row(self.ui.label_3, self.ui.PwdText))
-        form_layout.addWidget(create_form_row(self.ui.DirLab, directory_field))
+        form_layout.addWidget(create_form_row(self.ui.LinkLab, self.ui.LinkText, form_card))
+        form_layout.addWidget(create_form_row(self.ui.label_3, self.ui.PwdText, form_card))
+        form_layout.addWidget(create_form_row(self.ui.DirLab, directory_field, form_card))
 
         action_widget = QWidget(form_card)
         action_widget.setMinimumHeight(48)
@@ -149,22 +270,57 @@ class LanzouWindow(QMainWindow):
         action_row.addWidget(self.ui.StartBtn)
         form_layout.addWidget(action_widget)
         shell.addWidget(form_card)
-        shell.addSpacing(18)
+        shell.addSpacing(16)
 
-        log_card = QFrame(surface)
-        log_card.setObjectName("LogCard")
-        log_layout = QVBoxLayout(log_card)
-        log_layout.setContentsMargins(18, 16, 18, 16)
-        log_layout.setSpacing(10)
+        settings_card = QFrame(surface)
+        settings_card.setObjectName("SettingsCard")
+        settings_layout = QVBoxLayout(settings_card)
+        settings_layout.setContentsMargins(24, 20, 24, 20)
+        settings_layout.setSpacing(12)
 
-        log_header = QLabel("运行日志", log_card)
-        log_header.setObjectName("SectionLabel")
-        self.ui.textBrowser.setParent(log_card)
-        self.ui.progressBar.setParent(log_card)
-        log_layout.addWidget(log_header)
-        log_layout.addWidget(self.ui.textBrowser)
-        log_layout.addWidget(self.ui.progressBar)
-        shell.addWidget(log_card)
+        settings_title = QLabel("设置", settings_card)
+        settings_title.setObjectName("SectionLabel")
+        settings_hint = QLabel("默认下载目录会用于新任务；多线程选项暂时预留。", settings_card)
+        settings_hint.setObjectName("HintLabel")
+
+        self.defaultDirText = QLineEdit(settings_card)
+        self.defaultDirText.setPlaceholderText("默认下载目录")
+        self.defaultDirBtn = QPushButton("选择目录", settings_card)
+        self.defaultDirBtn.setIcon(QIcon())
+        self.defaultDirBtn.setMinimumHeight(42)
+        self.defaultDirBtn.setMinimumWidth(118)
+
+        default_dir_field = QWidget(settings_card)
+        default_dir_layout = QHBoxLayout(default_dir_field)
+        default_dir_layout.setContentsMargins(0, 0, 0, 0)
+        default_dir_layout.setSpacing(12)
+        default_dir_layout.addWidget(self.defaultDirText, 1)
+        default_dir_layout.addWidget(self.defaultDirBtn)
+
+        default_dir_label = QLabel("默认目录", settings_card)
+        default_dir_row = create_form_row(default_dir_label, default_dir_field, settings_card)
+
+        self.multiThreadCheck = QCheckBox("多线程下载（预留）", settings_card)
+        self.multiThreadCheck.setEnabled(False)
+        self.multiThreadCheck.setToolTip("预留给未来的多线程下载功能")
+
+        self.saveSettingsBtn = QPushButton("保存设置", settings_card)
+        self.saveSettingsBtn.setObjectName("SaveSettingsBtn")
+        self.saveSettingsBtn.setMinimumHeight(42)
+        self.saveSettingsBtn.setMinimumWidth(128)
+
+        settings_action = QWidget(settings_card)
+        settings_action_layout = QHBoxLayout(settings_action)
+        settings_action_layout.setContentsMargins(0, 0, 0, 0)
+        settings_action_layout.addWidget(self.multiThreadCheck)
+        settings_action_layout.addStretch(1)
+        settings_action_layout.addWidget(self.saveSettingsBtn)
+
+        settings_layout.addWidget(settings_title)
+        settings_layout.addWidget(settings_hint)
+        settings_layout.addWidget(default_dir_row)
+        settings_layout.addWidget(settings_action)
+        shell.addWidget(settings_card)
         shell.addStretch(1)
 
         self.ui.LinkText.setMinimumHeight(46)
@@ -174,10 +330,7 @@ class LanzouWindow(QMainWindow):
         self.ui.DirBtn.setMinimumWidth(128)
         self.ui.StartBtn.setMinimumHeight(46)
         self.ui.StartBtn.setMinimumWidth(156)
-        self.ui.textBrowser.setPlaceholderText("等待任务开始...")
-        self.ui.textBrowser.setFixedHeight(174)
-        self.ui.textBrowser.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.ui.progressBar.setFixedHeight(10)
+        self.defaultDirText.setMinimumHeight(42)
 
         self.setStyleSheet(
             """
@@ -201,12 +354,12 @@ class LanzouWindow(QMainWindow):
                 font-size: 16px;
                 font-weight: 700;
             }
-            QFrame#FormCard {
-                background: #ffffff;
-                border: 1px solid #e1e7f0;
-                border-radius: 8px;
+            QLabel#HintLabel {
+                color: #64748b;
+                font-size: 13px;
+                font-weight: 500;
             }
-            QFrame#LogCard {
+            QFrame#FormCard, QFrame#SettingsCard {
                 background: #ffffff;
                 border: 1px solid #e1e7f0;
                 border-radius: 8px;
@@ -266,27 +419,15 @@ class LanzouWindow(QMainWindow):
                 border-color: #93b4f5;
                 color: #f8fbff;
             }
-            QTextBrowser {
-                background: #f8fafc;
-                border: 1px solid #d7e0ec;
-                border-radius: 8px;
-                color: #344256;
-                padding: 13px;
-                font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei UI";
+            QPushButton#SaveSettingsBtn {
+                background: #eff6ff;
+                border: 1px solid #bfdbfe;
+                color: #1d4ed8;
+            }
+            QCheckBox {
+                color: #94a3b8;
                 font-size: 14px;
-            }
-            QProgressBar {
-                background: #e8edf5;
-                border: none;
-                border-radius: 6px;
-                color: #344054;
-                font-weight: 700;
-                height: 12px;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background: #14b8a6;
-                border-radius: 6px;
+                font-weight: 600;
             }
             """
         )
@@ -300,6 +441,45 @@ class LanzouWindow(QMainWindow):
         if directory:
             self.ui.DirText.setText(directory)
 
+    def choose_default_directory(self):
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "选择默认下载目录",
+            self.defaultDirText.text().strip() or self.default_download_dir,
+        )
+        if directory:
+            self.defaultDirText.setText(directory)
+
+    def save_settings(self):
+        previous_default_dir = self.default_download_dir
+        default_dir = self.defaultDirText.text().strip()
+        if not default_dir:
+            default_dir = self._fallback_download_dir()
+            self.defaultDirText.setText(default_dir)
+
+        self.default_download_dir = default_dir
+        current_task_dir = self.ui.DirText.text().strip()
+        if not current_task_dir or current_task_dir == previous_default_dir:
+            self.ui.DirText.setText(default_dir)
+        try:
+            SETTINGS_PATH.write_text(
+                json.dumps(
+                    {"default_download_dir": default_dir},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            QMessageBox.warning(self, "设置保存失败", "无法保存设置：%s" % exc)
+            return
+
+        self.saveSettingsBtn.setText("已保存")
+
+    def mark_settings_dirty(self):
+        if hasattr(self, "saveSettingsBtn"):
+            self.saveSettingsBtn.setText("保存设置")
+
     def start_download(self):
         task = self._build_task()
         if task is None:
@@ -308,7 +488,8 @@ class LanzouWindow(QMainWindow):
         self._prepare_download_ui()
         worker = DownloadWorker(task)
         worker.signals.message.connect(self.append_message)
-        worker.signals.progress.connect(self.ui.progressBar.setValue)
+        worker.signals.progress.connect(self.download_dialog.totalProgressBar.setValue)
+        worker.signals.file_progress.connect(self.download_dialog.currentProgressBar.setValue)
         worker.signals.error.connect(self.show_error)
         worker.signals.finished.connect(self.download_finished)
         self.active_worker = worker
@@ -317,12 +498,12 @@ class LanzouWindow(QMainWindow):
     def _build_task(self):
         share_url = self.ui.LinkText.text().strip()
         if not share_url:
-            self.append_message("Please input a share link.")
+            QMessageBox.warning(self, "缺少分享链接", "请先输入蓝奏云分享链接。")
             return None
 
         target_dir = self.ui.DirText.text().strip()
         if not target_dir:
-            target_dir = str(Path(os.getcwd()) / "Download")
+            target_dir = self.default_download_dir
             self.ui.DirText.setText(target_dir)
 
         return DownloadTask(
@@ -332,18 +513,18 @@ class LanzouWindow(QMainWindow):
         )
 
     def _prepare_download_ui(self):
-        self.ui.textBrowser.clear()
-        self.ui.progressBar.setValue(0)
-        self.ui.progressBar.setMinimum(0)
-        self.ui.progressBar.setMaximum(100)
-        self.ui.progressBar.setTextVisible(True)
-        self.ui.progressBar.setVisible(True)
+        if self.download_dialog is not None:
+            self.download_dialog.close()
+        self.download_dialog = DownloadProgressDialog(self, self.font())
+        self.download_dialog.reset()
+        self.download_dialog.show()
         self.ui.StartBtn.setEnabled(False)
         self.ui.StartBtn.setText("下载中...")
         self.ui.DirBtn.setEnabled(False)
 
     def append_message(self, message):
-        self.ui.textBrowser.append(message)
+        if self.download_dialog is not None:
+            self.download_dialog.append_message(message)
 
     def show_error(self, message):
         self.append_message("Error: %s" % message)
@@ -352,7 +533,21 @@ class LanzouWindow(QMainWindow):
         self.ui.StartBtn.setEnabled(True)
         self.ui.StartBtn.setText("开始下载")
         self.ui.DirBtn.setEnabled(True)
+        if self.download_dialog is not None:
+            self.download_dialog.mark_finished()
         self.active_worker = None
+
+    def _load_default_download_dir(self):
+        try:
+            settings = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return self._fallback_download_dir()
+
+        default_dir = str(settings.get("default_download_dir", "")).strip()
+        return default_dir or self._fallback_download_dir()
+
+    def _fallback_download_dir(self):
+        return str(Path(__file__).resolve().parent / "Download")
 
 
 def main():

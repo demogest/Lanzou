@@ -21,6 +21,7 @@ def _noop_progress(_progress):
 class DownloadCallbacks:
     on_message: Callable[[str], None] = _noop_message
     on_progress: Callable[[int], None] = _noop_progress
+    on_file_progress: Callable[[int], None] = _noop_progress
 
 
 class LanzouDownloadService:
@@ -35,6 +36,7 @@ class LanzouDownloadService:
             raise LanzouError("Share link is required.")
 
         callbacks.on_progress(0)
+        callbacks.on_file_progress(0)
         callbacks.on_message("Getting file list...")
         entries = self.client.list_files(task)
         if not entries:
@@ -71,8 +73,10 @@ class LanzouDownloadService:
         downloaded_paths = []
         total = len(entries)
         for index, entry in enumerate(entries, start=1):
+            callbacks.on_file_progress(0)
+            callbacks.on_message("Downloading %s (%d/%d)..." % (entry.name, index, total))
             try:
-                path, skipped = self._download_one(task, entry)
+                path, skipped = self._download_one(task, entry, callbacks)
                 downloaded_paths.append(path)
                 if skipped:
                     callbacks.on_message("%s already exists." % entry.name)
@@ -81,10 +85,11 @@ class LanzouDownloadService:
             except LanzouError as exc:
                 callbacks.on_message("Download %s failed: %s" % (entry.name, exc))
             finally:
+                callbacks.on_file_progress(100)
                 callbacks.on_progress(int(index / total * 100))
         return downloaded_paths
 
-    def _download_one(self, task, entry):
+    def _download_one(self, task, entry, callbacks):
         if not entry.download_url.startswith("http"):
             raise DownloadError("Resolved URL is invalid.")
 
@@ -92,6 +97,7 @@ class LanzouDownloadService:
         target_dir.mkdir(parents=True, exist_ok=True)
         target_path = target_dir / safe_filename(entry.name)
         if target_path.exists():
+            callbacks.on_file_progress(100)
             return target_path, True
 
         partial_path = target_path.with_name(target_path.name + ".part")
@@ -103,11 +109,22 @@ class LanzouDownloadService:
                 timeout=self.config.request_timeout,
             ) as response:
                 response.raise_for_status()
+                try:
+                    total_bytes = int(response.headers.get("Content-Length") or 0)
+                except ValueError:
+                    total_bytes = 0
+                downloaded_bytes = 0
                 with partial_path.open("wb") as file:
                     for chunk in response.iter_content(chunk_size=self.config.chunk_size):
                         if chunk:
                             file.write(chunk)
+                            if total_bytes:
+                                downloaded_bytes += len(chunk)
+                                callbacks.on_file_progress(
+                                    min(99, int(downloaded_bytes / total_bytes * 100))
+                                )
             partial_path.replace(target_path)
+            callbacks.on_file_progress(100)
             return target_path, False
         except (OSError, requests.RequestException) as exc:
             try:
