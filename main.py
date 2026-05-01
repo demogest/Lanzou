@@ -1,10 +1,11 @@
 import json
 import multiprocessing
 import sys
+from datetime import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QThreadPool
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtCore import Qt, QThreadPool, QUrl
+from PyQt5.QtGui import QDesktopServices, QFont, QIcon
 from PyQt5.QtWidgets import (
     QApplication,
     QDialog,
@@ -29,6 +30,7 @@ from mainWindow import Ui_MainWindow
 
 
 SETTINGS_PATH = Path(__file__).with_name("lanzou_settings.json")
+HISTORY_PATH = Path(__file__).with_name("lanzou_history.json")
 
 
 class DownloadProgressDialog(QDialog):
@@ -216,6 +218,13 @@ class LanzouWindow(QMainWindow):
         self.active_worker = None
         self.download_dialog = None
         self.default_download_dir, self.process_count = self._load_settings()
+        self.last_task = None
+
+        self._modernize_ui()
+        self.ui.DirText.setText(self.default_download_dir)
+        self.ui.DirBtn.clicked.connect(self.choose_directory)
+        self.settingsBtn.clicked.connect(self.open_settings_dialog)
+        self.historyBtn.clicked.connect(self.open_history_dialog)
 
         self._modernize_ui()
         self.ui.DirText.setText(self.default_download_dir)
@@ -339,6 +348,20 @@ class LanzouWindow(QMainWindow):
         form_layout.addWidget(action_widget)
         shell.addWidget(form_card)
         shell.addSpacing(16)
+        bottom_action = QWidget(surface)
+        bottom_layout = QHBoxLayout(bottom_action)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.addStretch(1)
+        self.settingsBtn = QPushButton("下载设置", bottom_action)
+        self.settingsBtn.setObjectName("SettingsBtn")
+        self.settingsBtn.setMinimumHeight(42)
+        self.settingsBtn.setMinimumWidth(128)
+        bottom_layout.addWidget(self.settingsBtn)
+        self.historyBtn = QPushButton("下载历史", bottom_action)
+        self.historyBtn.setMinimumHeight(42)
+        self.historyBtn.setMinimumWidth(128)
+        bottom_layout.addWidget(self.historyBtn)
+        shell.addWidget(bottom_action)
 
         settings_card = QFrame(surface)
         settings_card.setObjectName("SettingsCard")
@@ -545,6 +568,7 @@ class LanzouWindow(QMainWindow):
                 json.dumps(
                     {
                         "default_download_dir": default_dir,
+                        "process_count": process_count,
                         "process_count": self.processCountSpin.value(),
                     },
                     ensure_ascii=False,
@@ -563,6 +587,7 @@ class LanzouWindow(QMainWindow):
         if task is None:
             return
 
+        self.last_task = task
         self._prepare_download_ui()
         worker = DownloadWorker(task)
         worker.signals.message.connect(self.append_message)
@@ -588,6 +613,7 @@ class LanzouWindow(QMainWindow):
             share_url=share_url,
             password=self.ui.PwdText.text(),
             target_dir=Path(target_dir),
+            process_count=self.process_count,
             process_count=self.processCountSpin.value(),
         )
 
@@ -608,13 +634,66 @@ class LanzouWindow(QMainWindow):
     def show_error(self, message):
         self.append_message("Error: %s" % message)
 
-    def download_finished(self):
+    def download_finished(self, downloaded_paths):
         self.ui.StartBtn.setEnabled(True)
         self.ui.StartBtn.setText("开始下载")
         self.ui.DirBtn.setEnabled(True)
         if self.download_dialog is not None:
             self.download_dialog.mark_finished()
+        self._append_history(downloaded_paths)
+        self._prompt_open_folder(downloaded_paths)
         self.active_worker = None
+
+    def _prompt_open_folder(self, downloaded_paths):
+        folder = self.ui.DirText.text().strip() or self.default_download_dir
+        message = QMessageBox(self)
+        message.setWindowTitle("下载完成")
+        message.setText("任务已完成，是否打开下载目录？")
+        open_btn = message.addButton("打开文件夹", QMessageBox.AcceptRole)
+        message.addButton("关闭", QMessageBox.RejectRole)
+        message.exec_()
+        if message.clickedButton() == open_btn:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def _append_history(self, downloaded_paths):
+        if self.last_task is None:
+            return
+        record = {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "share_url": self.last_task.share_url,
+            "target_dir": str(self.last_task.target_dir),
+            "process_count": self.last_task.process_count,
+            "downloaded_count": len(downloaded_paths or []),
+            "files": [str(path) for path in (downloaded_paths or [])],
+        }
+        history = self._load_history()
+        history.insert(0, record)
+        HISTORY_PATH.write_text(json.dumps(history[:200], ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _load_history(self):
+        try:
+            return json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    def open_history_dialog(self):
+        history = self._load_history()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("下载历史")
+        dialog.resize(760, 480)
+        layout = QVBoxLayout(dialog)
+        browser = QTextBrowser(dialog)
+        if not history:
+            browser.setText("暂无下载历史。")
+        else:
+            blocks = []
+            for item in history:
+                blocks.append(
+                    "时间: {time}\n链接: {share_url}\n目录: {target_dir}\n进程: {process_count}\n下载文件数: {downloaded_count}\n".format(**item)
+                )
+            browser.setText("\n" + ("\n" + ("-" * 52) + "\n").join(blocks))
+        layout.addWidget(browser)
+        dialog.exec_()
 
     def _load_settings(self):
         try:
