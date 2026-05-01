@@ -225,16 +225,6 @@ class LanzouWindow(QMainWindow):
         self.ui.DirBtn.clicked.connect(self.choose_directory)
         self.settingsBtn.clicked.connect(self.open_settings_dialog)
         self.historyBtn.clicked.connect(self.open_history_dialog)
-
-        self._modernize_ui()
-        self.ui.DirText.setText(self.default_download_dir)
-        self.defaultDirText.setText(self.default_download_dir)
-        self.processCountSpin.setValue(self.process_count)
-        self.ui.DirBtn.clicked.connect(self.choose_directory)
-        self.defaultDirBtn.clicked.connect(self.choose_default_directory)
-        self.saveSettingsBtn.clicked.connect(self.save_settings)
-        self.defaultDirText.textChanged.connect(self.mark_settings_dirty)
-        self.processCountSpin.valueChanged.connect(self.mark_settings_dirty)
         self.ui.StartBtn.clicked.connect(self.start_download)
 
     def _modernize_ui(self):
@@ -362,59 +352,6 @@ class LanzouWindow(QMainWindow):
         self.historyBtn.setMinimumWidth(128)
         bottom_layout.addWidget(self.historyBtn)
         shell.addWidget(bottom_action)
-
-        settings_card = QFrame(surface)
-        settings_card.setObjectName("SettingsCard")
-        settings_layout = QVBoxLayout(settings_card)
-        settings_layout.setContentsMargins(24, 20, 24, 20)
-        settings_layout.setSpacing(12)
-
-        settings_title = QLabel("设置", settings_card)
-        settings_title.setObjectName("SectionLabel")
-        settings_hint = QLabel("默认下载目录会用于新任务；可设置下载进程数。", settings_card)
-        settings_hint.setObjectName("HintLabel")
-
-        self.defaultDirText = QLineEdit(settings_card)
-        self.defaultDirText.setPlaceholderText("默认下载目录")
-        self.defaultDirBtn = QPushButton("选择目录", settings_card)
-        self.defaultDirBtn.setIcon(QIcon())
-        self.defaultDirBtn.setMinimumHeight(42)
-        self.defaultDirBtn.setMinimumWidth(118)
-
-        default_dir_field = QWidget(settings_card)
-        default_dir_layout = QHBoxLayout(default_dir_field)
-        default_dir_layout.setContentsMargins(0, 0, 0, 0)
-        default_dir_layout.setSpacing(12)
-        default_dir_layout.addWidget(self.defaultDirText, 1)
-        default_dir_layout.addWidget(self.defaultDirBtn)
-
-        default_dir_label = QLabel("默认目录", settings_card)
-        default_dir_row = create_form_row(default_dir_label, default_dir_field, settings_card)
-
-        self.processCountSpin = QSpinBox(settings_card)
-        self.processCountSpin.setMinimum(1)
-        self.processCountSpin.setMaximum(max(1, multiprocessing.cpu_count()))
-        self.processCountSpin.setToolTip("单进程到 CPU 最大进程")
-        process_count_label = QLabel("下载进程", settings_card)
-        process_count_row = create_form_row(process_count_label, self.processCountSpin, settings_card)
-
-        self.saveSettingsBtn = QPushButton("保存设置", settings_card)
-        self.saveSettingsBtn.setObjectName("SaveSettingsBtn")
-        self.saveSettingsBtn.setMinimumHeight(42)
-        self.saveSettingsBtn.setMinimumWidth(128)
-
-        settings_action = QWidget(settings_card)
-        settings_action_layout = QHBoxLayout(settings_action)
-        settings_action_layout.setContentsMargins(0, 0, 0, 0)
-        settings_action_layout.addStretch(1)
-        settings_action_layout.addWidget(self.saveSettingsBtn)
-
-        settings_layout.addWidget(settings_title)
-        settings_layout.addWidget(settings_hint)
-        settings_layout.addWidget(default_dir_row)
-        settings_layout.addWidget(process_count_row)
-        settings_layout.addWidget(settings_action)
-        shell.addWidget(settings_card)
         shell.addStretch(1)
 
         self.ui.LinkText.setMinimumHeight(46)
@@ -569,7 +506,6 @@ class LanzouWindow(QMainWindow):
                     {
                         "default_download_dir": default_dir,
                         "process_count": process_count,
-                        "process_count": self.processCountSpin.value(),
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -614,7 +550,6 @@ class LanzouWindow(QMainWindow):
             password=self.ui.PwdText.text(),
             target_dir=Path(target_dir),
             process_count=self.process_count,
-            process_count=self.processCountSpin.value(),
         )
 
     def _prepare_download_ui(self):
