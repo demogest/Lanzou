@@ -1,57 +1,67 @@
-# Intro
+# Lanzou Downloader
 
-light weight tool to download multiple files within one share link
+Rust + Tauri desktop app for batch downloading files from a Lanzou share folder.
 
-一个用来批量下载同一蓝奏云分享链接中大量文件的小工具
+一个使用 Rust 与 Tauri 构建的蓝奏云批量下载工具。
 
-# Dependencies
+## Features
 
-have a look at *requirements.txt*
+- Resolve files from a Lanzou folder share link.
+- Supports optional extraction password.
+- Choose the target download directory.
+- Configure concurrent download workers.
+- Show total progress, per-worker progress, and event logs.
+- Keep local download history.
 
-# Usage
+## Requirements
 
-1. Clone this repo
+- Rust toolchain with Cargo
+- Node.js and npm
 
-   ```shell
-   git clone https://github.com/demogest/Lanzou.git
-   ```
+## Development
 
-2. Install runtime dependencies
-
-   ```shell
-   pip install -r requirements.txt
-   ```
-
-3. Run main.py
-
-   ```shell
-   python ./main.py
-   ```
-
-4. Input the share link and password(if have)
-
-5. click select to choose the directory or leave default
-
-6. click start button and wait until complete
-
-Or you can just download binary file which packed by pyinstaller from [release page](https://github.com/demogest/Lanzou/releases).
-
-To build a packaged executable, install the optional development dependencies:
+Install dependencies:
 
 ```shell
-pip install -r requirements-dev.txt
+npm install
 ```
 
-# Project Structure
+Run in development mode:
 
-- `main.py`: PyQt window controller and application entry point.
-- `mainWindow.py` / `mainWindow.ui`: generated Qt widgets and UI definition.
-- `lanzou_downloader/client.py`: Lanzou HTTP requests, page parsing, password handling, and download URL resolving.
-- `lanzou_downloader/service.py`: download workflow orchestration and file writing.
-- `lanzou_downloader/models.py`: task and file data models.
-- `lanzou_downloader/qt_worker.py`: Qt thread worker and signals.
+```shell
+npm run tauri:dev
+```
 
-# Notice
+Build frontend assets:
 
-- Once you click the start button, the download procedure won't stop until complete, even if you close the GUI
-- This tool didn't adapt to link that only have one file.
+```shell
+npm run build
+```
+
+Check the Rust backend:
+
+```shell
+cd src-tauri
+cargo check
+```
+
+## Packaging
+
+Build a desktop installer:
+
+```shell
+npm run tauri:build
+```
+
+Build artifacts are written under `src-tauri/target/release/`.
+
+## Project Structure
+
+- `src/`: Tauri frontend built with Vite and plain JavaScript.
+- `src-tauri/`: Rust backend, Tauri commands, settings/history storage, and download workflow.
+- `icon.png` / `icon.ico`: application icons used by the Tauri bundle.
+
+## Notice
+
+- Running downloads are not cancellable yet.
+- Single-file share links are not supported yet; folder share links are supported.
