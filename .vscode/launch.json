@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Tauri: Dev",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run tauri:dev",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Rust: Debug Tauri Binary",
+      "type": "lldb",
+      "request": "launch",
+      "program": "${workspaceFolder}/src-tauri/target/debug/lanzou-tauri.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "app: prepare debug",
+      "console": "integratedTerminal"
+    }
+  ]
+}
