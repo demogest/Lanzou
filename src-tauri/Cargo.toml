@@ -1,6 +1,6 @@
 [package]
 name = "lanzou-tauri"
-version = "2.0.2"
+version = "2.0.3"
 description = "A Rust and Tauri version of Lanzou Downloader"
 authors = ["Demogest"]
 edition = "2021"
