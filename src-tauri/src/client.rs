@@ -384,9 +384,11 @@ impl LanzouClient {
 
         let mut solved = false;
         for _ in 0..(strings.len() * 3) {
-            if (self.challenge_score(&strings)? - target as f64).abs() < 1e-6 {
-                solved = true;
-                break;
+            if let Ok(score) = self.challenge_score(&strings) {
+                if (score - target as f64).abs() < 1e-6 {
+                    solved = true;
+                    break;
+                }
             }
             strings.rotate_left(1);
         }
