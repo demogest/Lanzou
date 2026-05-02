@@ -24,84 +24,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  changelog:
-    name: Generate Release Changelog
-    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.publish_existing_draft }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      body: ${{ steps.release-notes.outputs.body }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-          fetch-depth: 0
-
-      - name: Generate changelog
-        id: release-notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-        run: |
-          set -euo pipefail
-
-          generated_notes="$(mktemp)"
-          generated_notes_error="$(mktemp)"
-          commit_notes="$(mktemp)"
-          release_body="$(mktemp)"
-
-          if ! gh api \
-            --method POST \
-            "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-            -f tag_name="${RELEASE_TAG}" \
-            -f configuration_file_path=".github/release.yml" \
-            --jq ".body" > "${generated_notes}" 2> "${generated_notes_error}"; then
-            echo "GitHub generated release notes failed, using commit changelog fallback." >&2
-            cat "${generated_notes_error}" >&2
-            echo "GitHub generated release notes were unavailable for this run." > "${generated_notes}"
-          fi
-
-          previous_tag="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
-          if [ -n "${previous_tag}" ]; then
-            git log --no-merges --pretty=format:"- %s (%h)" "${previous_tag}..HEAD" > "${commit_notes}"
-          else
-            git log --no-merges --pretty=format:"- %s (%h)" HEAD > "${commit_notes}"
-          fi
-
-          {
-            echo "Cross-platform Tauri builds for Lanzou Downloader."
-            echo
-            echo "## Downloads"
-            echo
-            echo "- Windows: use the \`*_setup.exe\` installer, \`.msi\`, or the \`*-portable.exe\` build."
-            echo "- macOS: use the \`.dmg\` for your CPU architecture."
-            echo "- Linux: use the \`.AppImage\`, \`.deb\`, or \`.rpm\` for your architecture."
-            echo
-            echo "## Changelog"
-            echo
-            cat "${generated_notes}"
-            echo
-            echo "## Commits"
-            echo
-            if [ -s "${commit_notes}" ]; then
-              cat "${commit_notes}"
-            else
-              echo "- No code commits detected for this release."
-            fi
-          } > "${release_body}"
-
-          delimiter="release_body_$(cat /proc/sys/kernel/random/uuid)"
-          {
-            echo "body<<${delimiter}"
-            cat "${release_body}"
-            echo "${delimiter}"
-          } >> "${GITHUB_OUTPUT}"
-
   release:
     name: Release ${{ matrix.name }}
-    needs: changelog
     if: ${{ github.event_name != 'workflow_dispatch' || !inputs.publish_existing_draft }}
     runs-on: ${{ matrix.platform }}
     strategy:
@@ -171,10 +95,17 @@ jobs:
         with:
           tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           releaseName: "Lanzou Downloader ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
-          releaseBody: ${{ needs.changelog.outputs.body }}
+          releaseBody: |
+            Cross-platform Tauri builds for Lanzou Downloader.
+
+            ## Downloads
+
+            - Windows: use the `*_setup.exe` installer, `.msi`, or the `*-portable.exe` build.
+            - macOS: use the `.dmg` for your CPU architecture.
+            - Linux: use the `.AppImage`, `.deb`, or `.rpm` for your architecture.
           releaseDraft: true
           prerelease: false
-          generateReleaseNotes: false
+          generateReleaseNotes: true
           retryAttempts: 2
           args: ${{ matrix.args }}
           assetNamePattern: "[name]-[version]-[platform]-[arch][_setup][ext]"
