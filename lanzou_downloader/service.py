@@ -1,6 +1,8 @@
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import Manager
 from pathlib import Path
+import queue
 from typing import Callable
 
 import requests
@@ -18,11 +20,16 @@ def _noop_progress(_progress):
     pass
 
 
+def _noop_process_progress(_slot, _name, _progress, _status):
+    pass
+
+
 @dataclass
 class DownloadCallbacks:
     on_message: Callable[[str], None] = _noop_message
     on_progress: Callable[[int], None] = _noop_progress
     on_file_progress: Callable[[int], None] = _noop_progress
+    on_process_progress: Callable[[int, str, int, str], None] = _noop_process_progress
 
 
 class LanzouDownloadService:
@@ -79,17 +86,30 @@ class LanzouDownloadService:
         downloaded_paths = []
         total = len(entries)
         for index, entry in enumerate(entries, start=1):
-            callbacks.on_file_progress(0)
+            def emit_file_progress(progress, file_name=entry.name):
+                callbacks.on_file_progress(progress)
+                callbacks.on_process_progress(1, file_name, progress, "下载中")
+
+            entry_callbacks = DownloadCallbacks(
+                on_message=callbacks.on_message,
+                on_progress=callbacks.on_progress,
+                on_file_progress=emit_file_progress,
+                on_process_progress=callbacks.on_process_progress,
+            )
+            emit_file_progress(0)
             callbacks.on_message("Downloading %s (%d/%d)..." % (entry.name, index, total))
             try:
-                path, skipped = self._download_one(task, entry, callbacks)
+                path, skipped = self._download_one(task, entry, entry_callbacks)
                 downloaded_paths.append(path)
                 if skipped:
                     callbacks.on_message("%s already exists." % entry.name)
+                    callbacks.on_process_progress(1, entry.name, 100, "已跳过")
                 else:
                     callbacks.on_message("%s downloaded." % entry.name)
+                    callbacks.on_process_progress(1, entry.name, 100, "已完成")
             except LanzouError as exc:
                 callbacks.on_message("Download %s failed: %s" % (entry.name, exc))
+                callbacks.on_process_progress(1, entry.name, 100, "失败")
             finally:
                 callbacks.on_file_progress(100)
                 callbacks.on_progress(int(index / total * 100))
@@ -103,37 +123,89 @@ class LanzouDownloadService:
         callbacks.on_file_progress(0)
         callbacks.on_message("Multiprocess mode enabled: %d processes." % task.process_count)
         callbacks.on_message("Preparing %d download jobs..." % total)
+        for slot in range(1, task.process_count + 1):
+            callbacks.on_process_progress(slot, "", 0, "等待任务")
         done = 0
+        next_index = 0
+        next_job_id = 0
 
-        with ProcessPoolExecutor(max_workers=task.process_count) as executor:
-            futures = {
-                executor.submit(
-                    _download_entry_job,
-                    entry.name,
-                    entry.download_url,
-                    str(target_dir),
-                    self.client.headers(task.share_url),
-                    self.config.request_timeout,
-                    self.config.chunk_size,
-                ): entry
-                for entry in entries
-            }
-
-            for future in as_completed(futures):
-                entry = futures[future]
-                done += 1
+        def drain_progress_events(progress_queue):
+            while True:
                 try:
-                    path_text, skipped = future.result()
-                    path = Path(path_text)
-                    downloaded_paths.append(path)
-                    if skipped:
-                        callbacks.on_message("%s already exists." % entry.name)
-                    else:
-                        callbacks.on_message("%s downloaded." % entry.name)
-                except Exception as exc:
-                    callbacks.on_message("Download %s failed: %s" % (entry.name, exc))
-                callbacks.on_progress(int(done / total * 100))
-                callbacks.on_file_progress(100)
+                    job_id, slot, file_name, progress, status = progress_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if active_job_ids.get(slot) != job_id:
+                    continue
+                callbacks.on_process_progress(slot, file_name, progress, status)
+
+        with Manager() as manager:
+            progress_queue = manager.Queue()
+            with ProcessPoolExecutor(max_workers=task.process_count) as executor:
+                active_futures = {}
+                active_job_ids = {}
+
+                def submit_next(slot):
+                    nonlocal next_index, next_job_id
+                    if next_index >= total:
+                        active_job_ids.pop(slot, None)
+                        callbacks.on_process_progress(slot, "", 0, "等待任务")
+                        return
+                    entry = entries[next_index]
+                    next_index += 1
+                    next_job_id += 1
+                    job_id = next_job_id
+                    active_job_ids[slot] = job_id
+                    callbacks.on_process_progress(slot, entry.name, 0, "下载中")
+                    future = executor.submit(
+                        _download_entry_job,
+                        entry.name,
+                        entry.download_url,
+                        str(target_dir),
+                        self.client.headers(task.share_url),
+                        self.config.request_timeout,
+                        self.config.chunk_size,
+                        progress_queue,
+                        slot,
+                        job_id,
+                    )
+                    active_futures[future] = (slot, entry, job_id)
+
+                for slot in range(1, min(task.process_count, total) + 1):
+                    submit_next(slot)
+
+                while active_futures:
+                    drain_progress_events(progress_queue)
+                    finished_futures, _ = wait(
+                        active_futures,
+                        timeout=0.15,
+                        return_when=FIRST_COMPLETED,
+                    )
+                    if not finished_futures:
+                        continue
+
+                    for future in finished_futures:
+                        slot, entry, job_id = active_futures.pop(future)
+                        active_job_ids.pop(slot, None)
+                        done += 1
+                        try:
+                            path_text, skipped = future.result()
+                            path = Path(path_text)
+                            downloaded_paths.append(path)
+                            if skipped:
+                                callbacks.on_message("%s already exists." % entry.name)
+                                callbacks.on_process_progress(slot, entry.name, 100, "已跳过")
+                            else:
+                                callbacks.on_message("%s downloaded." % entry.name)
+                                callbacks.on_process_progress(slot, entry.name, 100, "已完成")
+                        except Exception as exc:
+                            callbacks.on_message("Download %s failed: %s" % (entry.name, exc))
+                            callbacks.on_process_progress(slot, entry.name, 100, "失败")
+                        callbacks.on_progress(int(done / total * 100))
+                        callbacks.on_file_progress(100)
+                        submit_next(slot)
+
+                drain_progress_events(progress_queue)
         return downloaded_paths
 
     def _download_one(self, task, entry, callbacks):
@@ -191,11 +263,31 @@ def safe_filename(filename):
     return cleaned or "download.bin"
 
 
-def _download_entry_job(name, download_url, target_dir, headers, request_timeout, chunk_size):
+def _emit_process_progress(progress_queue, slot, job_id, name, progress, status):
+    if progress_queue is None:
+        return
+    try:
+        progress_queue.put((job_id, slot, name, progress, status), block=False)
+    except Exception:
+        pass
+
+
+def _download_entry_job(
+    name,
+    download_url,
+    target_dir,
+    headers,
+    request_timeout,
+    chunk_size,
+    progress_queue=None,
+    slot=1,
+    job_id=0,
+):
     if not download_url.startswith("http"):
         raise DownloadError("Resolved URL is invalid.")
     target_path = Path(target_dir) / safe_filename(name)
     if target_path.exists():
+        _emit_process_progress(progress_queue, slot, job_id, name, 100, "已跳过")
         return str(target_path), True
 
     partial_path = target_path.with_name(target_path.name + ".part")
@@ -207,15 +299,36 @@ def _download_entry_job(name, download_url, target_dir, headers, request_timeout
             timeout=request_timeout,
         ) as response:
             response.raise_for_status()
+            try:
+                total_bytes = int(response.headers.get("Content-Length") or 0)
+            except ValueError:
+                total_bytes = 0
+            downloaded_bytes = 0
+            last_progress = 0
             with partial_path.open("wb") as file:
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     if chunk:
                         file.write(chunk)
+                        if total_bytes:
+                            downloaded_bytes += len(chunk)
+                            progress = min(99, int(downloaded_bytes / total_bytes * 100))
+                            if progress > last_progress:
+                                last_progress = progress
+                                _emit_process_progress(
+                                    progress_queue,
+                                    slot,
+                                    job_id,
+                                    name,
+                                    progress,
+                                    "下载中",
+                                )
         partial_path.replace(target_path)
+        _emit_process_progress(progress_queue, slot, job_id, name, 100, "已完成")
         return str(target_path), False
     except (OSError, requests.RequestException) as exc:
         try:
             partial_path.unlink()
         except FileNotFoundError:
             pass
+        _emit_process_progress(progress_queue, slot, job_id, name, 100, "失败")
         raise DownloadError(str(exc)) from exc

@@ -7,6 +7,7 @@ class DownloadSignals(QObject):
     message = pyqtSignal(str)
     progress = pyqtSignal(int)
     file_progress = pyqtSignal(int)
+    process_progress = pyqtSignal(int, str, int, str)
     error = pyqtSignal(str)
     finished = pyqtSignal(object)
 
@@ -24,6 +25,7 @@ class DownloadWorker(QRunnable):
             on_message=self.signals.message.emit,
             on_progress=self.signals.progress.emit,
             on_file_progress=self.signals.file_progress.emit,
+            on_process_progress=self.signals.process_progress.emit,
         )
         try:
             result = self.service.download(self.task, callbacks)

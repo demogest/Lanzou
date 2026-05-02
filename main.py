@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTextBrowser,
     QTreeWidget,
@@ -46,6 +47,7 @@ class DownloadProgressDialog(QDialog):
         self.resize(900, 560)
         self.setMinimumSize(780, 460)
         self._log_seq = 0
+        self._process_rows = {}
         self._phase_labels = {"解析": "🔎", "下载": "⬇️", "完成": "✅", "错误": "❌"}
         if app_font is not None:
             self.setFont(app_font)
@@ -57,22 +59,31 @@ class DownloadProgressDialog(QDialog):
         title = QLabel("下载进度", self)
         title.setObjectName("DialogTitle")
 
-        self.currentProgressLabel = QLabel("当前文件", self)
-        self.currentProgressLabel.setObjectName("DialogProgressLabel")
-        self.currentProgressBar = QProgressBar(self)
-        self.currentProgressBar.setObjectName("CurrentProgressBar")
-
         self.totalProgressLabel = QLabel("总进度", self)
         self.totalProgressLabel.setObjectName("DialogProgressLabel")
         self.totalProgressBar = QProgressBar(self)
         self.totalProgressBar.setObjectName("TotalProgressBar")
 
-        for progress_bar in (self.currentProgressBar, self.totalProgressBar):
-            progress_bar.setMinimum(0)
-            progress_bar.setMaximum(100)
-            progress_bar.setValue(0)
-            progress_bar.setTextVisible(True)
-            progress_bar.setFixedHeight(24)
+        self.totalProgressBar.setMinimum(0)
+        self.totalProgressBar.setMaximum(100)
+        self.totalProgressBar.setValue(0)
+        self.totalProgressBar.setTextVisible(True)
+        self.totalProgressBar.setFixedHeight(24)
+
+        process_label = QLabel("进程子面板", self)
+        process_label.setObjectName("DialogSectionLabel")
+
+        self.processScroll = QScrollArea(self)
+        self.processScroll.setObjectName("ProcessScroll")
+        self.processScroll.setWidgetResizable(True)
+        self.processScroll.setMinimumHeight(130)
+        self.processScroll.setMaximumHeight(230)
+        self.processPanel = QWidget(self.processScroll)
+        self.processPanel.setObjectName("ProcessPanel")
+        self.processLayout = QVBoxLayout(self.processPanel)
+        self.processLayout.setContentsMargins(0, 0, 0, 0)
+        self.processLayout.setSpacing(8)
+        self.processScroll.setWidget(self.processPanel)
 
         self.logTree = QTreeWidget(self)
         self.logTree.setHeaderLabels(["阶段", "序号", "日志消息"])
@@ -86,10 +97,10 @@ class DownloadProgressDialog(QDialog):
         log_label.setObjectName("DialogSectionLabel")
 
         layout.addWidget(title)
-        layout.addWidget(self.currentProgressLabel)
-        layout.addWidget(self.currentProgressBar)
         layout.addWidget(self.totalProgressLabel)
         layout.addWidget(self.totalProgressBar)
+        layout.addWidget(process_label)
+        layout.addWidget(self.processScroll)
         layout.addWidget(log_label)
         layout.addWidget(self.logTree, 1)
 
@@ -141,14 +152,106 @@ class DownloadProgressDialog(QDialog):
             QProgressBar#TotalProgressBar::chunk {
                 background: #2563eb;
             }
+            QScrollArea#ProcessScroll {
+                background: transparent;
+                border: none;
+            }
+            QWidget#ProcessPanel {
+                background: transparent;
+            }
+            QFrame#ProcessRow {
+                background: #ffffff;
+                border: 1px solid #d7e0ec;
+                border-radius: 8px;
+            }
+            QLabel#ProcessSlotLabel {
+                color: #1f2a44;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QLabel#ProcessFileLabel {
+                color: #344256;
+                font-size: 13px;
+            }
+            QLabel#ProcessStatusLabel {
+                color: #64748b;
+                font-size: 13px;
+                font-weight: 700;
+            }
             """
         )
+        self.configure_processes(1)
 
-    def reset(self):
+    def reset(self, process_count=1):
         self.logTree.clear()
         self._log_seq = 0
-        self.currentProgressBar.setValue(0)
         self.totalProgressBar.setValue(0)
+        self.configure_processes(process_count)
+
+    def configure_processes(self, process_count):
+        process_count = max(1, int(process_count or 1))
+        while self.processLayout.count():
+            item = self.processLayout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        self._process_rows = {}
+        for slot in range(1, process_count + 1):
+            row = QFrame(self.processPanel)
+            row.setObjectName("ProcessRow")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(12, 8, 12, 8)
+            row_layout.setSpacing(10)
+
+            slot_label = QLabel("进程 %d" % slot, row)
+            slot_label.setObjectName("ProcessSlotLabel")
+            slot_label.setFixedWidth(66)
+
+            file_label = QLabel("等待任务", row)
+            file_label.setObjectName("ProcessFileLabel")
+            file_label.setMinimumWidth(160)
+            file_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+            progress_bar = QProgressBar(row)
+            progress_bar.setMinimum(0)
+            progress_bar.setMaximum(100)
+            progress_bar.setValue(0)
+            progress_bar.setTextVisible(True)
+            progress_bar.setFixedHeight(22)
+
+            status_label = QLabel("等待", row)
+            status_label.setObjectName("ProcessStatusLabel")
+            status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            status_label.setFixedWidth(66)
+
+            row_layout.addWidget(slot_label)
+            row_layout.addWidget(file_label, 2)
+            row_layout.addWidget(progress_bar, 3)
+            row_layout.addWidget(status_label)
+            self.processLayout.addWidget(row)
+            self._process_rows[slot] = {
+                "file": file_label,
+                "progress": progress_bar,
+                "status": status_label,
+            }
+        self.processLayout.addStretch(1)
+
+    def update_total_progress(self, progress):
+        self.totalProgressBar.setValue(max(0, min(100, int(progress))))
+
+    def update_process_progress(self, slot, file_name, progress, status):
+        slot = int(slot or 1)
+        row = self._process_rows.get(slot)
+        if row is None:
+            return
+        display_name = file_name or "等待任务"
+        display_status = status or "下载中"
+        progress = max(0, min(100, int(progress)))
+        row["file"].setText(display_name)
+        row["file"].setToolTip(display_name if file_name else "")
+        row["progress"].setValue(progress)
+        row["status"].setText(display_status)
 
     def append_message(self, message):
         self._log_seq += 1
@@ -549,11 +652,11 @@ class LanzouWindow(QMainWindow):
             return
 
         self.last_task = task
-        self._prepare_download_ui()
+        self._prepare_download_ui(task)
         worker = DownloadWorker(task)
         worker.signals.message.connect(self.append_message)
-        worker.signals.progress.connect(self.download_dialog.totalProgressBar.setValue)
-        worker.signals.file_progress.connect(self.download_dialog.currentProgressBar.setValue)
+        worker.signals.progress.connect(self.download_dialog.update_total_progress)
+        worker.signals.process_progress.connect(self.download_dialog.update_process_progress)
         worker.signals.error.connect(self.show_error)
         worker.signals.finished.connect(self.download_finished)
         self.active_worker = worker
@@ -577,11 +680,11 @@ class LanzouWindow(QMainWindow):
             process_count=self.process_count,
         )
 
-    def _prepare_download_ui(self):
+    def _prepare_download_ui(self, task):
         if self.download_dialog is not None:
             self.download_dialog.close()
         self.download_dialog = DownloadProgressDialog(self, self.font())
-        self.download_dialog.reset()
+        self.download_dialog.reset(task.process_count)
         self.download_dialog.show()
         self.ui.StartBtn.setEnabled(False)
         self.ui.StartBtn.setText("下载中...")
