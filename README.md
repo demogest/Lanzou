@@ -55,6 +55,21 @@ npm run tauri:build
 
 Build artifacts are written under `src-tauri/target/release/`.
 
+## GitHub Actions
+
+This repository builds cross-platform Tauri artifacts automatically.
+
+- Pushes to `main` or `codex/**`, pull requests, and manual workflow runs trigger the `Build Tauri binaries` workflow.
+- The build workflow uploads Linux, Windows, macOS Apple Silicon, and macOS Intel artifacts as GitHub Actions artifacts.
+- Pushing a `v*` tag triggers the `Release Tauri binaries` workflow and creates a draft GitHub Release with bundled assets.
+
+Create a release build by pushing a version tag:
+
+```shell
+git tag v0.2.0
+git push origin v0.2.0
+```
+
 ## Project Structure
 
 - `src/`: Tauri frontend built with Vite and plain JavaScript.
