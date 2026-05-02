@@ -20,8 +20,13 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTextBrowser,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
+    QListWidget,
+    QListWidgetItem,
+    QSplitter,
 )
 
 from lanzou_downloader.models import DownloadTask
@@ -38,8 +43,10 @@ class DownloadProgressDialog(QDialog):
         super().__init__(parent)
         self.setObjectName("DownloadDialog")
         self.setWindowTitle("下载进度")
-        self.resize(760, 500)
-        self.setMinimumSize(660, 420)
+        self.resize(900, 560)
+        self.setMinimumSize(780, 460)
+        self._log_seq = 0
+        self._phase_labels = {"解析": "🔎", "下载": "⬇️", "完成": "✅", "错误": "❌"}
         if app_font is not None:
             self.setFont(app_font)
 
@@ -49,10 +56,6 @@ class DownloadProgressDialog(QDialog):
 
         title = QLabel("下载进度", self)
         title.setObjectName("DialogTitle")
-        log_label = QLabel("运行日志", self)
-        log_label.setObjectName("DialogSectionLabel")
-        self.logBrowser = QTextBrowser(self)
-        self.logBrowser.setPlaceholderText("等待任务开始...")
 
         self.currentProgressLabel = QLabel("当前文件", self)
         self.currentProgressLabel.setObjectName("DialogProgressLabel")
@@ -70,16 +73,25 @@ class DownloadProgressDialog(QDialog):
             progress_bar.setValue(0)
             progress_bar.setTextVisible(True)
             progress_bar.setFixedHeight(24)
-            if app_font is not None:
-                progress_bar.setFont(app_font)
+
+        self.logTree = QTreeWidget(self)
+        self.logTree.setHeaderLabels(["阶段", "序号", "日志消息"])
+        self.logTree.setRootIsDecorated(False)
+        self.logTree.setAlternatingRowColors(True)
+        self.logTree.header().setStretchLastSection(True)
+        self.logTree.setColumnWidth(0, 88)
+        self.logTree.setColumnWidth(1, 72)
+
+        log_label = QLabel("多线程日志（按事件分行）", self)
+        log_label.setObjectName("DialogSectionLabel")
 
         layout.addWidget(title)
-        layout.addWidget(log_label)
-        layout.addWidget(self.logBrowser, 1)
         layout.addWidget(self.currentProgressLabel)
         layout.addWidget(self.currentProgressBar)
         layout.addWidget(self.totalProgressLabel)
         layout.addWidget(self.totalProgressBar)
+        layout.addWidget(log_label)
+        layout.addWidget(self.logTree, 1)
 
         self.setStyleSheet(
             """
@@ -133,12 +145,25 @@ class DownloadProgressDialog(QDialog):
         )
 
     def reset(self):
-        self.logBrowser.clear()
+        self.logTree.clear()
+        self._log_seq = 0
         self.currentProgressBar.setValue(0)
         self.totalProgressBar.setValue(0)
 
     def append_message(self, message):
-        self.logBrowser.append(message)
+        self._log_seq += 1
+        msg = str(message).strip()
+        phase = "下载"
+        if "error" in msg.lower() or "失败" in msg:
+            phase = "错误"
+        elif "解析" in msg or "提取" in msg:
+            phase = "解析"
+        elif "完成" in msg:
+            phase = "完成"
+        icon = self._phase_labels.get(phase, "•")
+        item = QTreeWidgetItem([f"{icon} {phase}", str(self._log_seq), msg])
+        self.logTree.addTopLevelItem(item)
+        self.logTree.scrollToItem(item)
 
     def mark_finished(self):
         self.setWindowTitle("下载完成")
@@ -593,17 +618,31 @@ class LanzouWindow(QMainWindow):
     def _append_history(self, downloaded_paths):
         if self.last_task is None:
             return
+        finished_time = datetime.now()
+        file_records = []
+        for file_path in (downloaded_paths or []):
+            p = Path(file_path)
+            size = "未知"
+            try:
+                if p.exists():
+                    size = f"{p.stat().st_size / 1024:.1f} KB"
+            except OSError:
+                pass
+            file_records.append({"name": p.name, "path": str(p), "size": size})
+
         record = {
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "time": finished_time.strftime("%Y-%m-%d %H:%M:%S"),
+            "finished_time": finished_time.strftime("%Y-%m-%d %H:%M:%S"),
             "share_url": self.last_task.share_url,
+            "password": self.last_task.password or "",
             "target_dir": str(self.last_task.target_dir),
             "process_count": self.last_task.process_count,
             "downloaded_count": len(downloaded_paths or []),
-            "files": [str(path) for path in (downloaded_paths or [])],
+            "files": file_records,
         }
         history = self._load_history()
         history.insert(0, record)
-        HISTORY_PATH.write_text(json.dumps(history[:200], ensure_ascii=False, indent=2), encoding="utf-8")
+        self._save_history(history[:200])
 
     def _load_history(self):
         try:
@@ -611,23 +650,144 @@ class LanzouWindow(QMainWindow):
         except (OSError, json.JSONDecodeError):
             return []
 
+    def _save_history(self, history):
+        HISTORY_PATH.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def open_history_dialog(self):
         history = self._load_history()
         dialog = QDialog(self)
         dialog.setWindowTitle("下载历史")
-        dialog.resize(760, 480)
+        dialog.resize(920, 540)
+
         layout = QVBoxLayout(dialog)
-        browser = QTextBrowser(dialog)
-        if not history:
-            browser.setText("暂无下载历史。")
-        else:
-            blocks = []
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        splitter = QSplitter(dialog)
+        list_panel = QWidget(splitter)
+        list_layout = QVBoxLayout(list_panel)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(10)
+
+        history_list = QListWidget(list_panel)
+        history_list.setAlternatingRowColors(True)
+
+        action_bar = QWidget(list_panel)
+        action_layout = QHBoxLayout(action_bar)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(8)
+        delete_btn = QPushButton("删除选中", action_bar)
+        clear_btn = QPushButton("清空历史", action_bar)
+        action_layout.addWidget(delete_btn)
+        action_layout.addWidget(clear_btn)
+
+        list_layout.addWidget(history_list, 1)
+        list_layout.addWidget(action_bar)
+
+        details = QTextBrowser(splitter)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+
+        def set_empty_state():
+            history_list.clear()
+            history_list.addItem("暂无下载历史")
+            details.setText("暂无下载记录。")
+            history_list.setEnabled(False)
+            delete_btn.setEnabled(False)
+            clear_btn.setEnabled(False)
+
+        def populate_history_list():
+            history_list.clear()
             for item in history:
-                blocks.append(
-                    "时间: {time}\n链接: {share_url}\n目录: {target_dir}\n进程: {process_count}\n下载文件数: {downloaded_count}\n".format(**item)
+                summary = f"{item.get('time', '-') }  |  {item.get('downloaded_count', 0)} 个文件  |  进程 {item.get('process_count', 1)}"
+                row = QListWidgetItem(summary)
+                row.setData(Qt.UserRole, item)
+                history_list.addItem(row)
+            history_list.setEnabled(True)
+            delete_btn.setEnabled(True)
+            clear_btn.setEnabled(True)
+
+        def render_details(current_item):
+            if current_item is None or not history:
+                details.setText("暂无下载记录。")
+                return
+            record = current_item.data(Qt.UserRole) or {}
+            file_lines = []
+            for idx, f in enumerate(record.get("files", []), start=1):
+                if isinstance(f, dict):
+                    file_lines.append(f"{idx}. {f.get('name', '')} | {f.get('size', '未知')}\n    {f.get('path', '')}")
+                else:
+                    file_lines.append(f"{idx}. {f}")
+            files_text = "\n".join(file_lines) if file_lines else "无"
+            details.setText(
+                "时间：{time}\n"
+                "URL：{share_url}\n"
+                "密码：{password}\n"
+                "完成时间：{finished_time}\n"
+                "保存目录：{target_dir}\n"
+                "并发进程：{process_count}\n"
+                "下载文件数：{downloaded_count}\n\n"
+                "下载文件信息：\n{files}".format(
+                    time=record.get("time", "-"),
+                    share_url=record.get("share_url", "-"),
+                    password=record.get("password") or "（无）",
+                    finished_time=record.get("finished_time", record.get("time", "-")),
+                    target_dir=record.get("target_dir", "-"),
+                    process_count=record.get("process_count", 1),
+                    downloaded_count=record.get("downloaded_count", 0),
+                    files=files_text,
                 )
-            browser.setText("\n" + ("\n" + ("-" * 52) + "\n").join(blocks))
-        layout.addWidget(browser)
+            )
+
+        def refresh_after_delete(next_row=0):
+            if not history:
+                set_empty_state()
+                return
+            populate_history_list()
+            history_list.setCurrentRow(max(0, min(next_row, len(history) - 1)))
+
+        def delete_selected_history():
+            current_row = history_list.currentRow()
+            if current_row < 0 or current_row >= len(history):
+                return
+            result = QMessageBox.question(
+                dialog,
+                "删除下载历史",
+                "确定删除选中的下载历史吗？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if result != QMessageBox.Yes:
+                return
+            history.pop(current_row)
+            self._save_history(history)
+            refresh_after_delete(current_row)
+
+        def clear_history():
+            if not history:
+                return
+            result = QMessageBox.question(
+                dialog,
+                "清空下载历史",
+                "确定清空全部下载历史吗？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if result != QMessageBox.Yes:
+                return
+            history.clear()
+            self._save_history(history)
+            set_empty_state()
+
+        history_list.currentItemChanged.connect(lambda cur, _: render_details(cur))
+        delete_btn.clicked.connect(delete_selected_history)
+        clear_btn.clicked.connect(clear_history)
+        if not history:
+            set_empty_state()
+        else:
+            populate_history_list()
+            history_list.setCurrentRow(0)
+
+        layout.addWidget(splitter)
         dialog.exec_()
 
     def _load_settings(self):
