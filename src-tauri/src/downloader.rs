@@ -1,7 +1,7 @@
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -12,6 +12,7 @@ use crate::errors::{LanzouError, LanzouResult};
 use crate::models::{DownloadEvent, DownloadTask, DownloadedFile, FileEntry};
 
 type DownloadEmitter = Arc<dyn Fn(DownloadEvent) + Send + Sync + 'static>;
+pub type CancellationToken = Arc<AtomicBool>;
 
 pub struct LanzouDownloadService {
     config: LanzouConfig,
@@ -27,15 +28,22 @@ impl Default for LanzouDownloadService {
 }
 
 impl LanzouDownloadService {
-    pub fn download(&self, task: DownloadTask, emit: DownloadEmitter) -> LanzouResult<Vec<DownloadedFile>> {
+    pub fn download(
+        &self,
+        task: DownloadTask,
+        emit: DownloadEmitter,
+        cancel: CancellationToken,
+    ) -> LanzouResult<Vec<DownloadedFile>> {
         let task = task.normalized();
         if task.share_url.is_empty() {
             return Err(LanzouError::Download("Share link is required.".to_string()));
         }
 
+        ensure_not_cancelled(&cancel)?;
         emit_total(&emit, 0);
         emit_message(&emit, "Getting file list...");
         let entries = self.client.list_files(&task)?;
+        ensure_not_cancelled(&cancel)?;
         if entries.is_empty() {
             return Err(LanzouError::Download(
                 "No downloadable files found in this share link.".to_string(),
@@ -44,7 +52,7 @@ impl LanzouDownloadService {
 
         emit_message(&emit, &format!("Found {} files.", entries.len()));
         emit_message(&emit, "Resolving download URLs...");
-        let resolved_entries = self.resolve_entries(&task, &entries, emit.clone());
+        let resolved_entries = self.resolve_entries(&task, &entries, emit.clone(), &cancel)?;
         if resolved_entries.is_empty() {
             return Err(LanzouError::Download(
                 "No file URLs were resolved successfully.".to_string(),
@@ -54,14 +62,16 @@ impl LanzouDownloadService {
         emit_message(&emit, "--------------------------------------------------");
         emit_message(&emit, "Start downloading...");
         let downloaded = if task.process_count <= 1 {
-            self.download_entries_single(&task, &resolved_entries, emit.clone())?
+            self.download_entries_single(&task, &resolved_entries, emit.clone(), cancel.clone())?
         } else {
-            self.download_entries_parallel(&task, resolved_entries, emit.clone())?
+            self.download_entries_parallel(&task, resolved_entries, emit.clone(), cancel.clone())?
         };
 
         if downloaded.is_empty() {
+            ensure_not_cancelled(&cancel)?;
             return Err(LanzouError::Download("All downloads failed.".to_string()));
         }
+        ensure_not_cancelled(&cancel)?;
         emit_message(&emit, "Download finished.");
         emit_total(&emit, 100);
         Ok(downloaded)
@@ -72,20 +82,26 @@ impl LanzouDownloadService {
         task: &DownloadTask,
         entries: &[FileEntry],
         emit: DownloadEmitter,
-    ) -> Vec<FileEntry> {
+        cancel: &CancellationToken,
+    ) -> LanzouResult<Vec<FileEntry>> {
         let mut resolved = Vec::new();
         for entry in entries {
+            ensure_not_cancelled(cancel)?;
             match self.client.resolve_file(task, entry) {
                 Ok(resolved_entry) => {
+                    ensure_not_cancelled(cancel)?;
                     emit_message(&emit, &format!("Get {} URL success.", resolved_entry.name));
                     resolved.push(resolved_entry);
                 }
                 Err(error) => {
+                    if error.is_cancelled() {
+                        return Err(error);
+                    }
                     emit_message(&emit, &format!("Get {} URL failed: {}", entry.name, error));
                 }
             }
         }
-        resolved
+        Ok(resolved)
     }
 
     fn download_entries_single(
@@ -93,11 +109,13 @@ impl LanzouDownloadService {
         task: &DownloadTask,
         entries: &[FileEntry],
         emit: DownloadEmitter,
+        cancel: CancellationToken,
     ) -> LanzouResult<Vec<DownloadedFile>> {
         let mut downloaded = Vec::new();
         let total = entries.len();
         let http = download_client(&self.config)?;
         for (index, entry) in entries.iter().enumerate() {
+            ensure_not_cancelled(&cancel)?;
             emit_process(&emit, 1, &entry.name, 0, "下载中");
             emit_message(
                 &emit,
@@ -110,6 +128,7 @@ impl LanzouDownloadService {
                 entry,
                 1,
                 emit.clone(),
+                &cancel,
             ) {
                 Ok((file, skipped)) => {
                     if skipped {
@@ -122,6 +141,9 @@ impl LanzouDownloadService {
                     downloaded.push(file);
                 }
                 Err(error) => {
+                    if error.is_cancelled() {
+                        return Err(error);
+                    }
                     emit_message(&emit, &format!("Download {} failed: {}", entry.name, error));
                     emit_process(&emit, 1, &entry.name, 100, "失败");
                 }
@@ -136,6 +158,7 @@ impl LanzouDownloadService {
         task: &DownloadTask,
         entries: Vec<FileEntry>,
         emit: DownloadEmitter,
+        cancel: CancellationToken,
     ) -> LanzouResult<Vec<DownloadedFile>> {
         let total = entries.len();
         let process_count = task.process_count.min(total).max(1);
@@ -160,10 +183,15 @@ impl LanzouDownloadService {
             let finished = Arc::clone(&finished);
             let downloaded = Arc::clone(&downloaded);
             let emit = emit.clone();
+            let cancel = cancel.clone();
 
             handles.push(thread::spawn(move || -> LanzouResult<()> {
                 let http = download_client(&config)?;
                 loop {
+                    if is_cancelled(&cancel) {
+                        emit_process(&emit, slot, "", 0, "已取消");
+                        return Err(LanzouError::Cancelled);
+                    }
                     let index = next_index.fetch_add(1, Ordering::SeqCst);
                     if index >= entries.len() {
                         emit_process(&emit, slot, "", 0, "等待任务");
@@ -172,7 +200,7 @@ impl LanzouDownloadService {
 
                     let entry = &entries[index];
                     emit_process(&emit, slot, &entry.name, 0, "下载中");
-                    match download_one(&http, &config, &task, entry, slot, emit.clone()) {
+                    match download_one(&http, &config, &task, entry, slot, emit.clone(), &cancel) {
                         Ok((file, skipped)) => {
                             if skipped {
                                 emit_message(&emit, &format!("{} already exists.", entry.name));
@@ -187,6 +215,10 @@ impl LanzouDownloadService {
                                 .push(file);
                         }
                         Err(error) => {
+                            if error.is_cancelled() {
+                                emit_process(&emit, slot, &entry.name, 100, "已取消");
+                                return Err(error);
+                            }
                             emit_message(&emit, &format!("Download {} failed: {}", entry.name, error));
                             emit_process(&emit, slot, &entry.name, 100, "失败");
                         }
@@ -198,10 +230,27 @@ impl LanzouDownloadService {
             }));
         }
 
+        let mut first_error = None;
         for handle in handles {
-            handle
-                .join()
-                .map_err(|_| LanzouError::Download("A download worker panicked.".to_string()))??;
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+                Err(_) => {
+                    if first_error.is_none() {
+                        first_error = Some(LanzouError::Download(
+                            "A download worker panicked.".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        if let Some(error) = first_error {
+            return Err(error);
         }
 
         let files = Arc::try_unwrap(downloaded)
@@ -219,7 +268,9 @@ fn download_one(
     entry: &FileEntry,
     slot: usize,
     emit: DownloadEmitter,
+    cancel: &CancellationToken,
 ) -> LanzouResult<(DownloadedFile, bool)> {
+    ensure_not_cancelled(cancel)?;
     if !entry.download_url.starts_with("http://") && !entry.download_url.starts_with("https://") {
         return Err(LanzouError::Download("Resolved URL is invalid.".to_string()));
     }
@@ -227,6 +278,7 @@ fn download_one(
     fs::create_dir_all(&task.target_dir)?;
     let target_path = task.target_dir.join(safe_filename(&entry.name));
     if target_path.exists() {
+        ensure_not_cancelled(cancel)?;
         return Ok((downloaded_file(&target_path), true));
     }
 
@@ -239,11 +291,13 @@ fn download_one(
     ));
 
     let result = (|| -> LanzouResult<()> {
+        ensure_not_cancelled(cancel)?;
         let mut response = http
             .get(&entry.download_url)
             .headers(request_headers(Some(&task.share_url), None)?)
             .send()?
             .error_for_status()?;
+        ensure_not_cancelled(cancel)?;
         let total_bytes = response.content_length().unwrap_or(0);
         let mut downloaded_bytes = 0_u64;
         let mut last_progress = 0_u8;
@@ -251,12 +305,14 @@ fn download_one(
         let mut buffer = vec![0_u8; config.chunk_size];
 
         loop {
+            ensure_not_cancelled(cancel)?;
             let read = response
                 .read(&mut buffer)
                 .map_err(|error| LanzouError::Download(error.to_string()))?;
             if read == 0 {
                 break;
             }
+            ensure_not_cancelled(cancel)?;
             file.write_all(&buffer[..read])
                 .map_err(|error| LanzouError::Download(error.to_string()))?;
             if total_bytes > 0 {
@@ -268,6 +324,7 @@ fn download_one(
                 }
             }
         }
+        ensure_not_cancelled(cancel)?;
         file.flush()
             .map_err(|error| LanzouError::Download(error.to_string()))?;
         fs::rename(&partial_path, &target_path)
@@ -288,6 +345,18 @@ fn download_client(config: &LanzouConfig) -> LanzouResult<Client> {
         .connect_timeout(config.connect_timeout)
         .timeout(config.request_timeout)
         .build()?)
+}
+
+fn is_cancelled(cancel: &CancellationToken) -> bool {
+    cancel.load(Ordering::SeqCst)
+}
+
+fn ensure_not_cancelled(cancel: &CancellationToken) -> LanzouResult<()> {
+    if is_cancelled(cancel) {
+        Err(LanzouError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 fn emit_message(emit: &DownloadEmitter, message: &str) {

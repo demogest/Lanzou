@@ -63,6 +63,11 @@ impl LanzouClient {
     pub fn list_files(&self, task: &DownloadTask) -> LanzouResult<Vec<FileEntry>> {
         let task = task.normalized();
         let html = self.request_text(Method::GET, &task.share_url, Some(&task.share_url), None, true)?;
+
+        if self.is_single_file_page(&html) {
+            return Ok(vec![self.single_file_entry(&task.share_url, &html)]);
+        }
+
         self.raise_if_unsupported_page(&html)?;
 
         let tokens: Vec<String> = Regex::new(r#"var [\w]{6} = '([\w]+?)';"#)
@@ -124,6 +129,22 @@ impl LanzouClient {
             })
             .collect();
         Ok(files)
+    }
+
+    fn is_single_file_page(&self, html: &str) -> bool {
+        !self.is_folder_page(html)
+            && (self.page_requires_password(html)
+                || Html::parse_document(html)
+                    .select(&Selector::parse("iframe").expect("valid selector"))
+                    .next()
+                    .is_some())
+    }
+
+    fn single_file_entry(&self, share_url: &str, html: &str) -> FileEntry {
+        FileEntry::new(
+            share_url.to_string(),
+            single_file_name(html).unwrap_or_else(|| fallback_file_name(share_url)),
+        )
     }
 
     pub fn resolve_file(&self, task: &DownloadTask, entry: &FileEntry) -> LanzouResult<FileEntry> {
@@ -331,10 +352,7 @@ impl LanzouClient {
     }
 
     fn raise_if_unsupported_page(&self, html: &str) -> LanzouResult<()> {
-        if Regex::new(r#"'fid':\d+?,"#)
-            .expect("valid regex")
-            .is_match(html)
-        {
+        if self.is_folder_page(html) {
             return Ok(());
         }
 
@@ -348,6 +366,12 @@ impl LanzouClient {
         Err(LanzouError::Parse(
             "Cannot find folder metadata in the share page.".to_string(),
         ))
+    }
+
+    fn is_folder_page(&self, html: &str) -> bool {
+        Regex::new(r#"'fid':\d+?,"#)
+            .expect("valid regex")
+            .is_match(html)
     }
 
     fn endpoint(&self, url: &str, endpoint: &str) -> LanzouResult<String> {
@@ -530,6 +554,56 @@ fn capture_optional(pattern: &str, text: &str) -> Option<String> {
         .expect("valid regex")
         .captures(text)
         .and_then(|capture| capture.get(1).map(|value| value.as_str().to_string()))
+}
+
+fn single_file_name(html: &str) -> Option<String> {
+    let document = Html::parse_document(html);
+    for selector in [
+        "#filenajax",
+        ".filethetext",
+        ".n_file_info .n_file_name",
+        ".n_box_3fn",
+        ".b #sp_name",
+        "title",
+    ] {
+        let selector = Selector::parse(selector).expect("valid selector");
+        if let Some(name) = document
+            .select(&selector)
+            .find_map(|node| clean_file_name(&node.text().collect::<String>()))
+        {
+            return Some(name);
+        }
+    }
+    None
+}
+
+fn clean_file_name(name: &str) -> Option<String> {
+    let mut value = name
+        .replace("_蓝奏云", "")
+        .replace("- 蓝奏云", "")
+        .replace("| 蓝奏云", "")
+        .replace("蓝奏云", "")
+        .trim()
+        .trim_matches('-')
+        .trim()
+        .to_string();
+    value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn fallback_file_name(share_url: &str) -> String {
+    Url::parse(share_url)
+        .ok()
+        .and_then(|url| {
+            url.path_segments()
+                .and_then(|mut segments| segments.next_back().map(str::to_string))
+        })
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "download.bin".to_string())
 }
 
 fn join_url(base: &str, path: &str) -> LanzouResult<String> {

@@ -177,6 +177,11 @@ input:focus {
   padding-top: 6px;
 }
 
+.download-actions {
+  display: flex;
+  gap: 10px;
+}
+
 #processHint {
   color: #64748b;
   font-weight: 700;
@@ -448,6 +453,7 @@ input:focus {
   }
 
   .header-actions,
+  .download-actions,
   .inline-field,
   .workspace,
   .history-layout {
@@ -455,6 +461,10 @@ input:focus {
   }
 
   .header-actions {
+    display: grid;
+  }
+
+  .download-actions {
     display: grid;
   }
 

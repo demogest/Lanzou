@@ -12,8 +12,16 @@ pub enum LanzouError {
     UnsupportedLink(String),
     #[error("{0}")]
     Download(String),
+    #[error("Download cancelled.")]
+    Cancelled,
     #[error("{0}")]
     Storage(String),
+}
+
+impl LanzouError {
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Cancelled)
+    }
 }
 
 impl From<reqwest::Error> for LanzouError {

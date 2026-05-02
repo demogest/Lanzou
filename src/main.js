@@ -36,7 +36,10 @@ app.innerHTML = `
         </div>
         <div class="form-footer">
           <span id="processHint">并发进程：1</span>
-          <button class="primary" id="startBtn" type="button">开始下载</button>
+          <div class="download-actions">
+            <button class="secondary" id="cancelBtn" type="button" disabled>取消下载</button>
+            <button class="primary" id="startBtn" type="button">开始下载</button>
+          </div>
         </div>
       </section>
 
@@ -137,6 +140,7 @@ const elements = {
   targetDir: document.querySelector("#targetDir"),
   chooseDirBtn: document.querySelector("#chooseDirBtn"),
   startBtn: document.querySelector("#startBtn"),
+  cancelBtn: document.querySelector("#cancelBtn"),
   processHint: document.querySelector("#processHint"),
   statusText: document.querySelector("#statusText"),
   totalPercent: document.querySelector("#totalPercent"),
@@ -170,6 +174,7 @@ const state = {
   history: [],
   selectedHistoryIndex: 0,
   downloading: false,
+  canceling: false,
   logSeq: 0,
 };
 
@@ -234,10 +239,13 @@ function clearLog() {
 
 function setDownloading(isDownloading) {
   state.downloading = isDownloading;
+  if (!isDownloading) state.canceling = false;
   elements.startBtn.disabled = isDownloading;
+  elements.cancelBtn.disabled = !isDownloading || state.canceling;
   elements.chooseDirBtn.disabled = isDownloading;
   elements.settingsBtn.disabled = isDownloading;
   elements.startBtn.textContent = isDownloading ? "下载中..." : "开始下载";
+  elements.cancelBtn.textContent = state.canceling ? "取消中..." : "取消下载";
   elements.statusText.textContent = isDownloading ? "任务运行中" : "等待任务";
 }
 
@@ -296,10 +304,35 @@ async function startDownload() {
     elements.completeDialog.showModal();
     state.history = await invoke("load_history");
   } catch (error) {
-    addLog(`Error: ${error}`);
-    elements.statusText.textContent = "任务失败";
+    if (String(error).toLowerCase().includes("cancel")) {
+      addLog("下载已取消。");
+      elements.statusText.textContent = "已取消";
+    } else {
+      addLog(`Error: ${error}`);
+      elements.statusText.textContent = "任务失败";
+    }
   } finally {
     setDownloading(false);
+  }
+}
+
+async function cancelDownload() {
+  if (!state.downloading || state.canceling) return;
+  state.canceling = true;
+  elements.cancelBtn.disabled = true;
+  elements.cancelBtn.textContent = "取消中...";
+  elements.statusText.textContent = "正在取消";
+  addLog("正在请求取消下载...");
+  try {
+    const cancelled = await invoke("cancel_download");
+    if (!cancelled) {
+      addLog("当前没有正在运行的下载任务。");
+      setDownloading(false);
+    }
+  } catch (error) {
+    addLog(`Error: ${error}`);
+    state.canceling = false;
+    setDownloading(state.downloading);
   }
 }
 
@@ -376,6 +409,7 @@ elements.chooseDirBtn.addEventListener("click", async () => {
 });
 
 elements.startBtn.addEventListener("click", startDownload);
+elements.cancelBtn.addEventListener("click", cancelDownload);
 elements.clearLogBtn.addEventListener("click", clearLog);
 
 elements.settingsBtn.addEventListener("click", () => {
