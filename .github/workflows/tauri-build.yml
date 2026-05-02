@@ -20,15 +20,19 @@ jobs:
         include:
           - name: Linux x64
             platform: ubuntu-22.04
+            artifact: linux-x64
             args: ""
           - name: Windows x64
             platform: windows-latest
+            artifact: windows-x64
             args: ""
           - name: macOS Apple Silicon
             platform: macos-latest
+            artifact: macos-aarch64
             args: "--target aarch64-apple-darwin"
           - name: macOS Intel
             platform: macos-latest
+            artifact: macos-x86_64
             args: "--target x86_64-apple-darwin"
 
     steps:
@@ -59,5 +63,12 @@ jobs:
         uses: tauri-apps/tauri-action@action-v0.6.2
         with:
           args: ${{ matrix.args }}
-          uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: "[platform]-[arch]-[bundle]"
+
+      - name: Upload Tauri bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/**
+            src-tauri/target/*/release/bundle/**
