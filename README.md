@@ -74,7 +74,8 @@ git push origin v0.2.0
 
 - `src/`: Tauri frontend built with Vite and plain JavaScript.
 - `src-tauri/`: Rust backend, Tauri commands, settings/history storage, and download workflow.
-- `icon.png` / `icon.ico`: application icons used by the Tauri bundle.
+- `src-tauri/icons/`: generated desktop icon set used by the Tauri bundle.
+- `icon.png`: source image used to regenerate icons with `npm run tauri icon icon.png`.
 
 ## Notice
 
