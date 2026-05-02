@@ -35,26 +35,32 @@ jobs:
           - name: Linux x64
             os: linux
             platform: ubuntu-22.04
+            artifact: linux-x64
             args: ""
           - name: Linux ARM64
             os: linux
             platform: ubuntu-22.04-arm
+            artifact: linux-arm64
             args: ""
           - name: Windows x64
             os: windows
             platform: windows-latest
+            artifact: windows-x64
             args: ""
           - name: Windows ARM64
             os: windows
             platform: windows-11-arm
+            artifact: windows-arm64
             args: ""
           - name: macOS Apple Silicon
             os: macos
             platform: macos-15
+            artifact: macos-aarch64
             args: ""
           - name: macOS Intel
             os: macos
             platform: macos-15-intel
+            artifact: macos-x86_64
             args: ""
 
     steps:
@@ -82,6 +88,7 @@ jobs:
         run: npm ci
 
       - name: Build and upload release assets
+        id: tauri
         uses: tauri-apps/tauri-action@action-v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -92,12 +99,47 @@ jobs:
             Cross-platform Tauri builds for Lanzou Downloader.
 
             Includes Linux x64/ARM64, Windows x64/ARM64, and macOS Intel/Apple Silicon installers.
+            Windows releases also include portable executables.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: true
           retryAttempts: 2
           args: ${{ matrix.args }}
           assetNamePattern: "[name]-[version]-[platform]-[arch][_setup][ext]"
+
+      - name: Build Windows portable executable
+        if: matrix.os == 'windows'
+        run: npx tauri build --no-bundle --ci
+
+      - name: Upload Windows portable executable
+        if: matrix.os == 'windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          APP_VERSION: ${{ steps.tauri.outputs.appVersion }}
+          PORTABLE_TARGET: ${{ matrix.artifact }}
+        run: |
+          $portableDir = "dist-portable"
+          New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+
+          $exe = @(
+            Get-ChildItem -Path "src-tauri/target/release" -Filter "lanzou-tauri.exe" -File -ErrorAction SilentlyContinue
+            Get-ChildItem -Path "src-tauri/target/*/release" -Filter "lanzou-tauri.exe" -File -ErrorAction SilentlyContinue
+          ) | Select-Object -First 1
+
+          if (-not $exe) {
+            throw "Portable executable not found"
+          }
+
+          $version = $env:APP_VERSION
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $version = $env:RELEASE_TAG -replace '^v', ''
+          }
+
+          $portablePath = Join-Path $portableDir "Lanzou-Downloader-$version-$env:PORTABLE_TARGET-portable.exe"
+          Copy-Item -LiteralPath $exe.FullName -Destination $portablePath -Force
+          gh release upload $env:RELEASE_TAG $portablePath --repo $env:GITHUB_REPOSITORY --clobber
 
   publish:
     name: Publish GitHub Release

@@ -76,6 +76,28 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
+      - name: Build Windows portable executable
+        if: matrix.os == 'windows'
+        run: npx tauri build --no-bundle --ci
+
+      - name: Prepare Windows portable executable
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $portableDir = "dist-portable"
+          New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+
+          $exe = @(
+            Get-ChildItem -Path "src-tauri/target/release" -Filter "lanzou-tauri.exe" -File -ErrorAction SilentlyContinue
+            Get-ChildItem -Path "src-tauri/target/*/release" -Filter "lanzou-tauri.exe" -File -ErrorAction SilentlyContinue
+          ) | Select-Object -First 1
+
+          if (-not $exe) {
+            throw "Portable executable not found"
+          }
+
+          Copy-Item -LiteralPath $exe.FullName -Destination "$portableDir/Lanzou-Downloader-${{ matrix.artifact }}-portable.exe" -Force
+
       - name: Upload Tauri bundles
         uses: actions/upload-artifact@v4
         with:
@@ -84,3 +106,11 @@ jobs:
           path: |
             src-tauri/target/release/bundle/**
             src-tauri/target/*/release/bundle/**
+
+      - name: Upload Windows portable executable
+        if: matrix.os == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-${{ matrix.artifact }}-portable
+          if-no-files-found: error
+          path: dist-portable/*.exe

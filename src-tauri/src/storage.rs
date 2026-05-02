@@ -9,6 +9,7 @@ use crate::models::{AppSettings, DownloadTask, DownloadedFile, HistoryRecord, In
 
 const SETTINGS_FILE: &str = "lanzou_settings.json";
 const HISTORY_FILE: &str = "lanzou_history.json";
+const PORTABLE_DATA_DIR: &str = "lanzou_data";
 
 pub fn initial_state(app: &AppHandle) -> LanzouResult<InitialState> {
     let settings = load_settings(app)?;
@@ -113,6 +114,11 @@ fn history_path(app: &AppHandle) -> LanzouResult<PathBuf> {
 }
 
 fn storage_dir(app: &AppHandle) -> LanzouResult<PathBuf> {
+    if let Some(dir) = portable_storage_dir() {
+        fs::create_dir_all(&dir)?;
+        return Ok(dir);
+    }
+
     let dir = app
         .path()
         .app_data_dir()
@@ -122,6 +128,10 @@ fn storage_dir(app: &AppHandle) -> LanzouResult<PathBuf> {
 }
 
 fn fallback_download_dir() -> PathBuf {
+    if let Some(dir) = portable_root_dir() {
+        return dir.join("Downloads");
+    }
+
     if let Ok(userprofile) = env::var("USERPROFILE") {
         return PathBuf::from(userprofile).join("Downloads").join("Lanzou");
     }
@@ -133,6 +143,25 @@ fn fallback_download_dir() -> PathBuf {
         .join("Download")
 }
 
+fn portable_storage_dir() -> Option<PathBuf> {
+    portable_root_dir().map(|dir| dir.join(PORTABLE_DATA_DIR))
+}
+
+fn portable_root_dir() -> Option<PathBuf> {
+    let exe = env::current_exe().ok()?;
+    let file_stem = exe.file_stem()?.to_string_lossy();
+
+    if !is_portable_exe_name(&file_stem) {
+        return None;
+    }
+
+    exe.parent().map(PathBuf::from)
+}
+
+fn is_portable_exe_name(name: &str) -> bool {
+    name.to_ascii_lowercase().contains("portable")
+}
+
 fn max_processes() -> usize {
     std::thread::available_parallelism()
         .map(|value| value.get())
@@ -142,4 +171,18 @@ fn max_processes() -> usize {
 
 fn now_label() -> String {
     chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_portable_exe_name;
+
+    #[test]
+    fn detects_portable_executable_names() {
+        assert!(is_portable_exe_name(
+            "Lanzou-Downloader-2.0.0-windows-x64-portable"
+        ));
+        assert!(is_portable_exe_name("PORTABLE-Lanzou"));
+        assert!(!is_portable_exe_name("lanzou-tauri"));
+    }
 }

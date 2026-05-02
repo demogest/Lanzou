@@ -62,6 +62,7 @@ This repository builds cross-platform Tauri artifacts automatically.
 - Pushes to `main` or `codex/**`, pull requests, and manual workflow runs trigger the `Build Tauri binaries` workflow.
 - The build workflow uploads Linux x64/ARM64, Windows x64/ARM64, macOS Apple Silicon, and macOS Intel artifacts as GitHub Actions artifacts.
 - Pushing a `v*` tag triggers the `Release Tauri binaries` workflow. The workflow uploads all bundled assets to a draft release first, then publishes the GitHub Release automatically after every platform build succeeds.
+- Windows builds also publish portable executables named `Lanzou-Downloader-*-windows-*-portable.exe`. Portable builds keep settings and history next to the executable under `lanzou_data/`, and use a local `Downloads/` folder by default.
 - The release workflow can also be run manually for an existing tag. Enable `publish_existing_draft` to publish an existing draft without rebuilding assets.
 
 Create a release build by pushing a version tag:
