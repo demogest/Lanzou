@@ -60,8 +60,9 @@ Build artifacts are written under `src-tauri/target/release/`.
 This repository builds cross-platform Tauri artifacts automatically.
 
 - Pushes to `main` or `codex/**`, pull requests, and manual workflow runs trigger the `Build Tauri binaries` workflow.
-- The build workflow uploads Linux, Windows, macOS Apple Silicon, and macOS Intel artifacts as GitHub Actions artifacts.
-- Pushing a `v*` tag triggers the `Release Tauri binaries` workflow and creates a draft GitHub Release with bundled assets.
+- The build workflow uploads Linux x64/ARM64, Windows x64/ARM64, macOS Apple Silicon, and macOS Intel artifacts as GitHub Actions artifacts.
+- Pushing a `v*` tag triggers the `Release Tauri binaries` workflow. The workflow uploads all bundled assets to a draft release first, then publishes the GitHub Release automatically after every platform build succeeds.
+- The release workflow can also be run manually for an existing tag. Enable `publish_existing_draft` to publish an existing draft without rebuilding assets.
 
 Create a release build by pushing a version tag:
 

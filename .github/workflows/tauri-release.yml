@@ -4,33 +4,64 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing git tag to publish, for example v2.0.1"
+        required: true
+        type: string
+      publish_existing_draft:
+        description: "Publish the existing draft for this tag without rebuilding assets"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   release:
     name: Release ${{ matrix.name }}
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.publish_existing_draft }}
     runs-on: ${{ matrix.platform }}
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Linux x64
+            os: linux
             platform: ubuntu-22.04
             args: ""
+          - name: Linux ARM64
+            os: linux
+            platform: ubuntu-22.04-arm
+            args: ""
           - name: Windows x64
+            os: windows
             platform: windows-latest
             args: ""
+          - name: Windows ARM64
+            os: windows
+            platform: windows-11-arm
+            args: ""
           - name: macOS Apple Silicon
-            platform: macos-latest
-            args: "--target aarch64-apple-darwin"
+            os: macos
+            platform: macos-15
+            args: ""
           - name: macOS Intel
-            platform: macos-latest
-            args: "--target x86_64-apple-darwin"
+            os: macos
+            platform: macos-15-intel
+            args: ""
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -40,11 +71,9 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.os == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
@@ -57,10 +86,36 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Lanzou Downloader ${{ github.ref_name }}"
-          releaseBody: "Cross-platform Tauri builds for Lanzou Downloader."
+          tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          releaseName: "Lanzou Downloader ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          releaseBody: |
+            Cross-platform Tauri builds for Lanzou Downloader.
+
+            Includes Linux x64/ARM64, Windows x64/ARM64, and macOS Intel/Apple Silicon installers.
           releaseDraft: true
           prerelease: false
+          generateReleaseNotes: true
+          retryAttempts: 2
           args: ${{ matrix.args }}
           assetNamePattern: "[name]-[version]-[platform]-[arch][_setup][ext]"
+
+  publish:
+    name: Publish GitHub Release
+    needs: release
+    if: ${{ always() && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.publish_existing_draft)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | .id" | head -n 1)"
+          if [ -z "${release_id}" ]; then
+            echo "No GitHub Release found for tag ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" -F draft=false -F prerelease=false

@@ -19,21 +19,35 @@ jobs:
       matrix:
         include:
           - name: Linux x64
+            os: linux
             platform: ubuntu-22.04
             artifact: linux-x64
             args: ""
+          - name: Linux ARM64
+            os: linux
+            platform: ubuntu-22.04-arm
+            artifact: linux-arm64
+            args: ""
           - name: Windows x64
+            os: windows
             platform: windows-latest
             artifact: windows-x64
             args: ""
+          - name: Windows ARM64
+            os: windows
+            platform: windows-11-arm
+            artifact: windows-arm64
+            args: ""
           - name: macOS Apple Silicon
-            platform: macos-latest
+            os: macos
+            platform: macos-15
             artifact: macos-aarch64
-            args: "--target aarch64-apple-darwin"
+            args: ""
           - name: macOS Intel
-            platform: macos-latest
+            os: macos
+            platform: macos-15-intel
             artifact: macos-x86_64
-            args: "--target x86_64-apple-darwin"
+            args: ""
 
     steps:
       - name: Checkout
@@ -47,11 +61,9 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.os == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
