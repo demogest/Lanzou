@@ -75,7 +75,9 @@ git push origin v0.2.0
 
 ## Project Structure
 
-- `src/`: Tauri frontend built with Vite and plain JavaScript.
+- `src/`: Tauri frontend built with Vite and React.
+- `src/components/`: React UI and feature components for the downloader workspace.
+- `src/lib/`: Frontend state helpers and formatting utilities.
 - `src-tauri/`: Rust backend, Tauri commands, settings/history storage, and download workflow.
 - `src-tauri/icons/`: generated desktop icon set used by the Tauri bundle.
 - `icon.png`: source image used to regenerate icons with `npm run tauri icon icon.png`.

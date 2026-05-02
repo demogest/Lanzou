@@ -1,12 +1,21 @@
 [package]
 name = "lanzou-tauri"
-version = "2.0.4"
+version = "2.0.5"
 description = "A Rust and Tauri version of Lanzou Downloader"
 authors = ["Demogest"]
 edition = "2021"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+
+[profile.release]
+codegen-units = 1
+debug = false
+incremental = false
+lto = "fat"
+opt-level = 3
+panic = "abort"
+strip = "symbols"
 
 [dependencies]
 base64 = "0.22"
