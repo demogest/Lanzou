@@ -1,0 +1,23 @@
+[package]
+name = "lanzou-tauri"
+version = "0.2.0"
+description = "A Rust and Tauri version of Lanzou Downloader"
+authors = ["Demogest"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+chrono = "0.4"
+open = "5"
+regex = "1"
+reqwest = { version = "0.12", features = ["blocking", "brotli", "cookies", "deflate", "gzip", "json"] }
+rfd = "0.15"
+scraper = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+thiserror = "1"
+url = "2"

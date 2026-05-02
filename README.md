@@ -42,6 +42,28 @@ To build a packaged executable, install the optional development dependencies:
 pip install -r requirements-dev.txt
 ```
 
+## Tauri / Rust version
+
+This repository also contains a Rust + Tauri implementation beside the original PyQt version.
+
+Prerequisites:
+
+- Rust toolchain
+- Node.js and npm
+
+Run in development mode:
+
+```shell
+npm install
+npm run tauri:dev
+```
+
+Build a desktop package:
+
+```shell
+npm run tauri:build
+```
+
 # Project Structure
 
 - `main.py`: PyQt window controller and application entry point.
@@ -50,6 +72,8 @@ pip install -r requirements-dev.txt
 - `lanzou_downloader/service.py`: download workflow orchestration and file writing.
 - `lanzou_downloader/models.py`: task and file data models.
 - `lanzou_downloader/qt_worker.py`: Qt thread worker and signals.
+- `src-tauri/`: Rust backend, Tauri commands, settings/history storage, and download workflow.
+- `src/`: Tauri frontend built with Vite and plain JavaScript.
 
 # Notice
 
