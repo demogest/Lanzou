@@ -390,6 +390,9 @@ elements.chooseDefaultDirBtn.addEventListener("click", async () => {
 });
 
 elements.saveSettingsBtn.addEventListener("click", async () => {
+  const previousDefaultDir = state.settings.defaultDownloadDir;
+  const currentTargetDir = elements.targetDir.value.trim();
+  const shouldUpdateTargetDir = !currentTargetDir || currentTargetDir === previousDefaultDir;
   const settings = await invoke("save_settings", {
     settings: {
       defaultDownloadDir: elements.defaultDir.value.trim(),
@@ -397,6 +400,9 @@ elements.saveSettingsBtn.addEventListener("click", async () => {
     },
   });
   applySettings(settings);
+  if (shouldUpdateTargetDir) {
+    elements.targetDir.value = settings.defaultDownloadDir || "";
+  }
   elements.settingsDialog.close();
   addLog("设置已保存。");
 });
