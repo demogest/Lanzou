@@ -1,9 +1,6 @@
-__pycache__
 .idea
 Download/
 *.part
-lanzou_settings.json
-lanzou_history.json
 node_modules/
 dist/
 src-tauri/target/
